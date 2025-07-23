@@ -127,7 +127,7 @@ export const ElevationProfile: React.FC<ElevationProfileProps> = ({
           color: 'rgba(0, 0, 0, 0.1)',
         },
         ticks: {
-          callback: function(value: any, index: number) {
+          callback: function(_value: any, index: number) {
             const distance = elevationData.distances[index];
             return distance ? distance.toFixed(0) + 'm' : '';
           }

@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Property Boundary Viewer - Iframe Integration</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 2rem;
+            font-weight: 600;
+        }
+        
+        .header p {
+            margin: 10px 0 0 0;
+            opacity: 0.9;
+        }
+        
+        .iframe-container {
+            position: relative;
+            width: 100%;
+            height: 600px;
+            background: #f8f9fa;
+        }
+        
+        .iframe-container iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            border-radius: 0;
+        }
+        
+        .controls {
+            padding: 20px;
+            background: #f8f9fa;
+            border-top: 1px solid #e9ecef;
+        }
+        
+        .control-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .control-group label {
+            font-weight: 500;
+            min-width: 120px;
+        }
+        
+        .control-group input, .control-group select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        
+        .control-group button {
+            padding: 8px 16px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+        
+        .control-group button:hover {
+            background: #0056b3;
+        }
+        
+        .info {
+            background: #e7f3ff;
+            border: 1px solid #b3d9ff;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+        
+        .info h3 {
+            margin: 0 0 10px 0;
+            color: #0056b3;
+        }
+        
+        .info ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+        
+        .info li {
+            margin-bottom: 5px;
+        }
+        
+        .code-example {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Property Boundary Viewer</h1>
+            <p>Interactive map viewer with elevation analysis and property boundaries</p>
+        </div>
+        
+        <div class="iframe-container">
+            <iframe 
+                id="mapViewer"
+                src="https://your-vercel-app-url.vercel.app"
+                title="Property Boundary Viewer"
+                allowfullscreen>
+            </iframe>
+        </div>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label for="iframeUrl">Iframe URL:</label>
+                <input 
+                    type="text" 
+                    id="iframeUrl" 
+                    value="https://your-vercel-app-url.vercel.app"
+                    style="flex: 1;"
+                >
+                <button onclick="updateIframe()">Update</button>
+            </div>
+            
+            <div class="control-group">
+                <label for="iframeHeight">Height:</label>
+                <input 
+                    type="number" 
+                    id="iframeHeight" 
+                    value="600" 
+                    min="300" 
+                    max="1000"
+                >
+                <button onclick="updateHeight()">Update Height</button>
+            </div>
+            
+            <div class="control-group">
+                <label for="messageType">Send Message:</label>
+                <select id="messageType">
+                    <option value="focus">Focus on Location</option>
+                    <option value="reset">Reset View</option>
+                    <option value="toggleSidebar">Toggle Sidebar</option>
+                </select>
+                <button onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+        
+        <div class="info">
+            <h3>Iframe Integration Features</h3>
+            <ul>
+                <li><strong>Responsive Design:</strong> Automatically adapts to container size</li>
+                <li><strong>Cross-Origin Communication:</strong> Send messages between parent and iframe</li>
+                <li><strong>Subscription Model:</strong> Built-in usage tracking and plan management</li>
+                <li><strong>Elevation Analysis:</strong> Interactive elevation profiles with Chart.js</li>
+                <li><strong>Property Boundaries:</strong> View and measure property boundaries</li>
+                <li><strong>Search Integration:</strong> Global location search with suggestions</li>
+            </ul>
+        </div>
+        
+        <div class="code-example">
+            <strong>Basic Iframe Integration:</strong><br>
+            &lt;iframe <br>
+            &nbsp;&nbsp;src="https://your-vercel-app-url.vercel.app" <br>
+            &nbsp;&nbsp;width="100%" <br>
+            &nbsp;&nbsp;height="600px" <br>
+            &nbsp;&nbsp;frameborder="0" <br>
+            &nbsp;&nbsp;allowfullscreen&gt; <br>
+            &lt;/iframe&gt;
+        </div>
+        
+        <div class="code-example">
+            <strong>React Component Example:</strong><br>
+            const MapViewer = () => { <br>
+            &nbsp;&nbsp;return ( <br>
+            &nbsp;&nbsp;&nbsp;&nbsp;&lt;iframe <br>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;src="https://your-vercel-app-url.vercel.app" <br>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;style={{ width: '100%', height: '600px', border: 'none' }} <br>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;title="Property Boundary Viewer" <br>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;allowFullScreen <br>
+            &nbsp;&nbsp;&nbsp;&nbsp;/&gt; <br>
+            &nbsp;&nbsp;); <br>
+            };
+        </div>
+    </div>
+
+    <script>
+        function updateIframe() {
+            const url = document.getElementById('iframeUrl').value;
+            document.getElementById('mapViewer').src = url;
+        }
+        
+        function updateHeight() {
+            const height = document.getElementById('iframeHeight').value;
+            document.querySelector('.iframe-container').style.height = height + 'px';
+        }
+        
+        function sendMessage() {
+            const messageType = document.getElementById('messageType').value;
+            const iframe = document.getElementById('mapViewer');
+            
+            const messages = {
+                focus: { type: 'focus', location: [153.026, -27.4705], zoom: 16 },
+                reset: { type: 'reset' },
+                toggleSidebar: { type: 'toggleSidebar' }
+            };
+            
+            iframe.contentWindow.postMessage(messages[messageType], '*');
+        }
+        
+        // Listen for messages from the iframe
+        window.addEventListener('message', function(event) {
+            if (event.origin !== 'https://your-vercel-app-url.vercel.app') return;
+            
+            console.log('Message from iframe:', event.data);
+            
+            // Handle different message types
+            switch(event.data.type) {
+                case 'subscription_required':
+                    alert('Subscription required for this feature');
+                    break;
+                case 'usage_limit_reached':
+                    alert('Usage limit reached. Please upgrade your plan.');
+                    break;
+                case 'location_selected':
+                    console.log('Location selected:', event.data.location);
+                    break;
+            }
+        });
+    </script>
+</body>
+</html> 

@@ -55,17 +55,15 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) =
   }, []);
 
   const performSearch = async (searchQuery: string) => {
-    console.log('Performing search for:', searchQuery);
     setIsLoading(true);
     try {
-      // Use the correct MapTiler geocoding API endpoint
+      // Use MapTiler geocoding API with proximity bias to current map center
       const response = await fetch(
-        `https://api.maptiler.com/geocoding/${encodeURIComponent(searchQuery + ' Australia')}.json?key=s9pdXU8BxZTbUAwzlkhL&limit=12`
+        `https://api.maptiler.com/geocoding/${encodeURIComponent(searchQuery)}.json?key=s9pdXU8BxZTbUAwzlkhL&proximity=${mapCenter[0]},${mapCenter[1]}&limit=8&types=address,poi,place`
       );
       
       if (response.ok) {
         const data = await response.json();
-        console.log('Search API response:', data);
         const results: SearchResult[] = data.features?.map((feature: any) => ({
           id: feature.id,
           place_name: feature.place_name,
@@ -79,34 +77,9 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) =
           }
         })) || [];
         
-        console.log('All results:', results);
-        
-        // Filter for Australian results
-        const australianResults = results.filter(result => 
-          result.properties.country === 'Australia' || 
-          result.properties.country === 'AU' ||
-          result.place_name.toLowerCase().includes('australia') ||
-          result.place_name.toLowerCase().includes('nsw') ||
-          result.place_name.toLowerCase().includes('vic') ||
-          result.place_name.toLowerCase().includes('qld') ||
-          result.place_name.toLowerCase().includes('wa') ||
-          result.place_name.toLowerCase().includes('sa') ||
-          result.place_name.toLowerCase().includes('tas') ||
-          result.place_name.toLowerCase().includes('nt') ||
-          result.place_name.toLowerCase().includes('act')
-        );
-        
-        console.log('Australian results:', australianResults);
-        
-        setSuggestions(australianResults);
-        setShowSuggestions(australianResults.length > 0);
+        setSuggestions(results);
+        setShowSuggestions(results.length > 0);
         setSelectedIndex(-1);
-      } else {
-        console.error('Search API error:', response.status, response.statusText);
-        const errorText = await response.text();
-        console.error('Error response:', errorText);
-        setSuggestions([]);
-        setShowSuggestions(false);
       }
     } catch (error) {
       console.error('Search error:', error);
@@ -118,9 +91,7 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) =
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    console.log('Input changed to:', value);
-    setQuery(value);
+    setQuery(e.target.value);
     setShowSuggestions(false);
     setSelectedIndex(-1);
   };
@@ -156,13 +127,10 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) =
     inputRef.current?.blur();
   };
 
-  const handleInputFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-    console.log('Input focused, suggestions length:', suggestions.length);
+  const handleInputFocus = () => {
     if (suggestions.length > 0) {
       setShowSuggestions(true);
     }
-    e.target.style.borderColor = '#3b82f6';
-    e.target.style.boxShadow = '0 0 0 1px #3b82f6';
   };
 
   const getHighlightedText = (text: string, query: string) => {
@@ -190,25 +158,8 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) =
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
           onFocus={handleInputFocus}
-          placeholder="Search Australia..."
-          style={{
-            width: '100%',
-            padding: '4px 8px',
-            paddingLeft: '24px',
-            paddingRight: '24px',
-            fontSize: '12px',
-            backgroundColor: 'white',
-            border: '1px solid #d1d5db',
-            borderRadius: '4px',
-            boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
-            outline: 'none',
-            transition: 'all 0.2s'
-          }}
-
-          onBlur={(e) => {
-            e.target.style.borderColor = '#d1d5db';
-            e.target.style.boxShadow = '0 1px 2px 0 rgba(0, 0, 0, 0.05)';
-          }}
+          placeholder="Search..."
+          className="w-full px-2 py-1 pl-6 pr-6 text-xs bg-white border border-gray-300 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
         />
         
         {/* Search Icon */}
@@ -248,60 +199,31 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) =
 
       {/* Suggestions Dropdown */}
       {showSuggestions && suggestions.length > 0 && (
-        <div style={{
-          position: 'absolute',
-          zIndex: 9999,
-          width: '100%',
-          marginTop: '4px',
-          backgroundColor: 'white',
-          border: '1px solid #e5e7eb',
-          borderRadius: '8px',
-          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
-          maxHeight: '320px',
-          overflowY: 'auto'
-        }}>
+        <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-80 overflow-y-auto">
           {suggestions.map((suggestion, index) => (
             <div
               key={suggestion.id}
               onClick={() => handleSelect(suggestion)}
-              style={{
-                padding: '12px 16px',
-                cursor: 'pointer',
-                transition: 'background-color 0.2s',
-                backgroundColor: index === selectedIndex ? '#eff6ff' : 'transparent',
-                borderLeft: index === selectedIndex ? '4px solid #3b82f6' : 'none',
-                borderTopLeftRadius: index === 0 ? '8px' : '0',
-                borderTopRightRadius: index === 0 ? '8px' : '0',
-                borderBottomLeftRadius: index === suggestions.length - 1 ? '8px' : '0',
-                borderBottomRightRadius: index === suggestions.length - 1 ? '8px' : '0'
-              }}
-              onMouseOver={(e) => {
-                if (index !== selectedIndex) {
-                  e.currentTarget.style.backgroundColor = '#f9fafb';
-                }
-              }}
-              onMouseOut={(e) => {
-                if (index !== selectedIndex) {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                }
-              }}
+              className={`px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors ${
+                index === selectedIndex ? 'bg-blue-50 border-l-4 border-blue-500' : ''
+              } ${index === 0 ? 'rounded-t-lg' : ''} ${index === suggestions.length - 1 ? 'rounded-b-lg' : ''}`}
             >
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+              <div className="flex items-start space-x-3">
                 {/* Location Icon */}
-                <div style={{ flexShrink: 0, marginTop: '2px' }}>
-                  <svg style={{ width: '16px', height: '16px', color: '#9ca3af' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="flex-shrink-0 mt-0.5">
+                  {/* <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
+                  </svg> */}
                 </div>
                 
                 {/* Content */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '14px', fontWeight: '500', color: '#111827' }}>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-gray-900">
                     {getHighlightedText(suggestion.place_name, query)}
                   </div>
                   {suggestion.properties.address && (
-                    <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                    <div className="text-xs text-gray-500 mt-1">
                       {suggestion.properties.address}
                     </div>
                   )}
@@ -314,19 +236,9 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) =
 
       {/* No Results */}
       {showSuggestions && suggestions.length === 0 && query.trim().length >= 2 && !isLoading && (
-        <div style={{
-          position: 'absolute',
-          zIndex: 9999,
-          width: '100%',
-          marginTop: '4px',
-          backgroundColor: 'white',
-          border: '1px solid #e5e7eb',
-          borderRadius: '8px',
-          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
-          padding: '16px'
-        }}>
-          <div style={{ fontSize: '14px', color: '#6b7280', textAlign: 'center' }}>
-            No Australian locations found for "{query}"
+        <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-4">
+          <div className="text-sm text-gray-500 text-center">
+            No results found for "{query}"
           </div>
         </div>
       )}

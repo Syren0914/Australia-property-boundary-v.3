@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
-import MaplibreGeocoder from '@maplibre/maplibre-gl-geocoder';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import '@maplibre/maplibre-gl-geocoder/dist/maplibre-gl-geocoder.css';
 import { Protocol } from 'pmtiles';
 import * as turf from '@turf/turf';
 import { Search } from './Search';
 import { ElevationChart } from './ElevationChart';
+import { SubscriptionProvider, useSubscription } from './contexts/SubscriptionContext';
+import { SubscriptionModal } from './components/SubscriptionModal';
+import { UsageTracker } from './components/UsageTracker';
 
 // Google Elevation API function
 const getElevationData = async (lat: number, lng: number): Promise<number> => {
@@ -66,7 +67,7 @@ const createElevationProfile = async (points: [number, number][]): Promise<{ dis
   return { distances, elevations };
 };
 
-function App() {
+function AppContent() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   
@@ -88,6 +89,18 @@ function App() {
   const [showElevationChart, setShowElevationChart] = useState(false);
   const [elevationData, setElevationData] = useState<{ distances: number[]; elevations: number[] } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Subscription context
+  const { 
+    currentPlan, 
+    usage, 
+    showSubscriptionModal, 
+    setShowSubscriptionModal, 
+    incrementSearch, 
+    incrementElevationProfile, 
+    canPerformAction, 
+    subscribeToPlan 
+  } = useSubscription();
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -378,6 +391,15 @@ function App() {
 
   // Handle search result selection
   const handleSearchSelect = (result: any) => {
+    // Check if user can perform search
+    if (!canPerformAction('search')) {
+      setShowSubscriptionModal(true);
+      return;
+    }
+
+    // Increment search usage
+    incrementSearch();
+
     if (mapRef.current) {
       const map = mapRef.current;
       
@@ -599,11 +621,20 @@ function App() {
                   <>
                     <button
                       onClick={async () => {
+                        // Check if user can perform elevation analysis
+                        if (!canPerformAction('elevation')) {
+                          setShowSubscriptionModal(true);
+                          return;
+                        }
+
                         setIsLoading(true);
                         try {
                           const data = await createElevationProfile(elevationPoints);
                           setElevationData(data);
                           setShowElevationChart(true);
+                          
+                          // Increment elevation profile usage
+                          incrementElevationProfile();
                         } catch (error) {
                           console.error('Error creating elevation profile:', error);
                           alert('Error creating elevation profile. Please try again.');
@@ -747,7 +778,29 @@ function App() {
         onClose={() => setShowElevationChart(false)}
         elevationData={elevationData}
       />
+
+      {/* Subscription Components */}
+      <SubscriptionModal
+        isVisible={showSubscriptionModal}
+        onClose={() => setShowSubscriptionModal(false)}
+        onSubscribe={subscribeToPlan}
+        currentPlan={currentPlan}
+      />
+
+      <UsageTracker
+        currentPlan={currentPlan}
+        usage={usage}
+        onUpgrade={() => setShowSubscriptionModal(true)}
+      />
     </div>
+  );
+}
+
+function App() {
+  return (
+    <SubscriptionProvider>
+      <AppContent />
+    </SubscriptionProvider>
   );
 }
 
