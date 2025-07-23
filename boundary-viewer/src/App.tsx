@@ -156,7 +156,7 @@ function AppContent() {
       setMapCenter([center.lng, center.lat]);
     });
 
-    const pmtilesUrl = 'output.pmtiles'; // ✅ From /public/output.pmtiles
+    const pmtilesUrl = 'https://github.com/[YOUR_USERNAME]/pmtiles-data/releases/download/v1.0.0/output.pmtiles'; // Replace [YOUR_USERNAME] with your GitHub username
     const sourceId = 'parcels';
 
     map.on('style.load', () => {
