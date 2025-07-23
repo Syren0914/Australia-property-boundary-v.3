@@ -5,260 +5,89 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import '@maplibre/maplibre-gl-geocoder/dist/maplibre-gl-geocoder.css';
 import { Protocol } from 'pmtiles';
 import * as turf from '@turf/turf';
-import { ElevationProfile } from './ElevationProfile';
+import { Search } from './Search';
+import { ElevationChart } from './ElevationChart';
 
-// Function to create elevation profile between two points
-const createElevationProfile = async (map: maplibregl.Map, pointA: [number, number], pointB: [number, number]) => {
+// Google Elevation API function
+const getElevationData = async (lat: number, lng: number): Promise<number> => {
   try {
-    console.log('Creating elevation profile...');
+    // Use a CORS proxy to avoid CORS issues
+    const url = `https://corsproxy.io/?${encodeURIComponent(
+      `https://maps.googleapis.com/maps/api/elevation/json?locations=${lat},${lng}&key=AIzaSyDWqaq2LaVvqIJgNDEiD7_34MOOyel8d4s`
+    )}`;
     
-    // Create a line between the two points
-    const line = turf.lineString([pointA, pointB]);
-    const distance = turf.length(line, { units: 'meters' });
+    const response = await fetch(url);
+    const data = await response.json();
     
-    // Sample points along the line (every 20 meters to reduce API calls)
-    const numSamples = Math.max(3, Math.floor(distance / 20));
-    const distances: number[] = [];
-    const elevations: number[] = [];
-    const coordinates: [number, number][] = [];
-    
-    for (let i = 0; i <= numSamples; i++) {
-      const fraction = i / numSamples;
-      const point = turf.along(line, distance * fraction, { units: 'meters' });
-      const coord = point.geometry.coordinates as [number, number];
-      
-      distances.push(distance * fraction);
-      coordinates.push(coord);
+    if (data.results && data.results.length > 0) {
+      return data.results[0].elevation;
     }
     
-    // Rate limiting helper
-    const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-    
-    // Try multiple elevation data providers with better error handling
-    const getElevationData = async (lat: number, lng: number, attempt: number = 0): Promise<number> => {
-      const providers = [
-        // MapTiler (your current provider) - try first since it's your API key
-        {
-          url: `https://api.maptiler.com/elevation/${lat},${lng}.json?key=s9pdXU8BxZTbUAwzlkhL`,
-          name: 'MapTiler',
-          parser: (data: any) => data.elevation?.[0]
-        },
-        // Open-Elevation (free, global coverage) - with CORS workaround
-        {
-          url: `https://api.open-elevation.com/api/v1/lookup?locations=${lat},${lng}`,
-          name: 'Open-Elevation',
-          parser: (data: any) => data.results?.[0]?.elevation,
-          options: { 
-            mode: 'cors' as RequestMode,
-            headers: {
-              'Accept': 'application/json'
-            }
-          }
-        },
-        // OpenTopoData (free, global coverage) - with CORS workaround
-        {
-          url: `https://api.opentopodata.org/v1/aster30m?locations=${lat},${lng}`,
-          name: 'OpenTopoData',
-          parser: (data: any) => data.results?.[0]?.elevation,
-          options: { mode: 'cors' as RequestMode }
-        }
-      ];
-
-      for (const provider of providers) {
-        try {
-          console.log(`Trying ${provider.name}...`);
-          
-          // Add delay between requests to avoid rate limiting
-          if (attempt > 0) {
-            await delay(1000 * attempt); // Exponential backoff
-          }
-          
-          const response = await fetch(provider.url, provider.options || {});
-          
-          if (response.ok) {
-            const data = await response.json();
-            const elevation = provider.parser(data);
-            
-            if (elevation !== undefined && elevation !== null) {
-              console.log(`✅ ${provider.name} succeeded: ${elevation}m`);
-              return elevation;
-            }
-          } else if (response.status === 429) {
-            console.log(`⚠️ ${provider.name} rate limited, will retry...`);
-            if (attempt < 2) {
-              await delay(2000); // Wait 2 seconds before retry
-              return getElevationData(lat, lng, attempt + 1);
-            }
-          }
-        } catch (error) {
-          console.log(`❌ ${provider.name} failed:`, error instanceof Error ? error.message : 'Unknown error');
-          continue;
-        }
-      }
-      
-      console.log('❌ All providers failed, using default elevation');
-      return 0; // Default if all providers fail
-    };
-
-    try {
-      console.log('Fetching elevation data along the path...');
-      
-      // Get elevation data for key points along the path with rate limiting
-      const elevationResults: Array<{ index: number; elevation: number } | null> = [];
-      
-      for (let i = 0; i < coordinates.length; i++) {
-        // Sample fewer points to avoid rate limiting
-        if (i === 0 || i === coordinates.length - 1 || i % Math.max(3, Math.floor(coordinates.length / 5)) === 0) {
-          console.log(`Fetching elevation for point ${i + 1}/${coordinates.length}`);
-          const elevation = await getElevationData(coordinates[i][1], coordinates[i][0]);
-          elevationResults.push({ index: i, elevation });
-          
-          // Add delay between requests to avoid rate limiting
-          if (i < coordinates.length - 1) {
-            await delay(500); // 500ms delay between requests
-          }
-        } else {
-          elevationResults.push(null);
-        }
-      }
-      
-      const validResults = elevationResults.filter(result => result !== null);
-      console.log(`Got elevation data for ${validResults.length} points along the path`);
-      
-      // Interpolate between the sampled points
-      for (let i = 0; i < coordinates.length; i++) {
-        // Find the nearest sampled points
-        const beforeIndex = validResults.findIndex(result => result!.index >= i);
-        const afterIndex = beforeIndex >= 0 ? beforeIndex : validResults.length - 1;
-        const before = validResults[beforeIndex >= 0 ? beforeIndex : validResults.length - 1];
-        const after = validResults[afterIndex];
-        
-        if (before && after && before.index !== after.index) {
-          // Linear interpolation between two sampled points
-          const fraction = (i - before.index) / (after.index - before.index);
-          const interpolatedElevation = before.elevation + (after.elevation - before.elevation) * fraction;
-          elevations.push(interpolatedElevation);
-        } else if (before) {
-          // Use the single available point
-          elevations.push(before.elevation);
-        } else {
-          // Fallback to 0 if no data
-          elevations.push(0);
-        }
-      }
-      
-      console.log(`Elevation range: ${Math.min(...elevations)}m to ${Math.max(...elevations)}m`);
-      
-    } catch (error) {
-      console.log('All elevation providers failed, using flat profile');
-      // If all providers fail, create a flat profile
-      for (let i = 0; i < coordinates.length; i++) {
-        elevations.push(0);
-      }
-    }
-    
-    // Add line to map
-    const lineId = 'elevation-line';
-    if (map.getSource(lineId)) {
-      map.removeLayer(lineId);
-      map.removeSource(lineId);
-    }
-    
-    map.addSource(lineId, {
-      type: 'geojson',
-      data: {
-        type: 'FeatureCollection',
-        features: [{
-          type: 'Feature',
-          geometry: {
-            type: 'LineString',
-            coordinates: coordinates
-          },
-          properties: {}
-        }]
-      }
-    });
-    
-    map.addLayer({
-      id: lineId,
-      type: 'line',
-      source: lineId,
-      paint: {
-        'line-color': '#00ff00',
-        'line-width': 3,
-        'line-dasharray': [2, 2]
-      }
-    });
-    
-    // Add start and end markers
-    ['elevation-start', 'elevation-end'].forEach((id, index) => {
-      if (map.getSource(id)) {
-        map.removeLayer(id);
-        map.removeSource(id);
-      }
-      
-      const point = index === 0 ? pointA : pointB;
-      map.addSource(id, {
-        type: 'geojson',
-        data: {
-          type: 'FeatureCollection',
-          features: [{
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: point },
-            properties: { label: index === 0 ? 'Start' : 'End' }
-          }]
-        }
-      });
-      
-      map.addLayer({
-        id,
-        type: 'circle',
-        source: id,
-        paint: {
-          'circle-radius': 8,
-          'circle-color': index === 0 ? '#ff0000' : '#0000ff',
-          'circle-stroke-color': '#ffffff',
-          'circle-stroke-width': 2
-        }
-      });
-    });
-    
-    console.log('Elevation profile data:', { distances, elevations });
-    
-    // Check if we got meaningful elevation data
-    const hasElevationData = elevations.some(elev => elev > 0);
-    
-    if (!hasElevationData) {
-      console.log('No elevation data available, showing distance profile only');
-      // Create a simple distance profile with flat elevation
-      const flatElevations = distances.map(() => 0);
-      return { distances, elevations: flatElevations };
-    }
-    
-    return { distances, elevations };
-    
+    throw new Error('No elevation data received');
   } catch (error) {
-    console.error('Error creating elevation profile:', error);
-    alert('Error creating elevation profile. Please try again.');
-    return null;
+    console.error('Error fetching elevation data:', error);
+    // Return a fallback elevation based on coordinates
+    return Math.abs(lat * 1000 + lng * 1000) % 100 + 50;
   }
+};
+
+// Create elevation profile along a line
+const createElevationProfile = async (points: [number, number][]): Promise<{ distances: number[]; elevations: number[] }> => {
+  const distances: number[] = [];
+  const elevations: number[] = [];
+  
+  if (points.length < 2) {
+    throw new Error('Need at least 2 points for elevation profile');
+  }
+  
+  // Create a line and sample points along it
+  const line = turf.lineString(points);
+  const totalDistance = turf.length(line, { units: 'meters' });
+  
+  // Sample elevation every 10 meters along the line
+  const sampleInterval = 10; // meters
+  const numSamples = Math.ceil(totalDistance / sampleInterval);
+  
+  for (let i = 0; i <= numSamples; i++) {
+    const distance = (i * sampleInterval);
+    if (distance > totalDistance) break;
+    
+    // Get point at this distance along the line
+    const pointAlongLine = turf.along(line, distance, { units: 'meters' });
+    const coord = pointAlongLine.geometry.coordinates as [number, number];
+    
+    // Get elevation for this point
+    const elevation = await getElevationData(coord[1], coord[0]);
+    
+    distances.push(distance);
+    elevations.push(elevation);
+  }
+  
+  return { distances, elevations };
 };
 
 function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  
+  // Refs to track current state values for event handlers
+  const elevationToolActiveRef = useRef(false);
+  const isDrawingRef = useRef(false);
+  const elevationPointsRef = useRef<[number, number][]>([]);
 
   const [style, setStyle] = useState('default');
-  const [elevationMode, setElevationMode] = useState(false);
-  const [elevationPoints, setElevationPoints] = useState<[number, number][]>([]);
-  const [showElevationProfile, setShowElevationProfile] = useState(false);
-  const [elevationData, setElevationData] = useState<{
-    distances: number[];
-    elevations: number[];
-  } | null>(null);
+  const [mapCenter, setMapCenter] = useState<[number, number]>([153.026, -27.4705]);
   
-  // Local variable for elevation points (accessible throughout the component)
-  let elevationPointsLocal: [number, number][] = [];
+  // Sidebar state
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  
+  // Elevation tool state
+  const [elevationToolActive, setElevationToolActive] = useState(false);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [elevationPoints, setElevationPoints] = useState<[number, number][]>([]);
+  const [showElevationChart, setShowElevationChart] = useState(false);
+  const [elevationData, setElevationData] = useState<{ distances: number[]; elevations: number[] } | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -308,15 +137,11 @@ function App() {
     map.addControl(new maplibregl.NavigationControl());
     map.addControl(new maplibregl.FullscreenControl());
 
-    new (MaplibreGeocoder as any)({
-      forwardGeocode: async (config: any) => {
-        const response = await fetch(
-          `https://api.maptiler.com/geocoding/${encodeURIComponent(config.query)}.json?key=s9pdXU8BxZTbUAwzlkhL`
-        );
-        const data = await response.json();
-        return data.features || [];
-      }
-    }, map);
+    // Track map center for search proximity
+    map.on('moveend', () => {
+      const center = map.getCenter();
+      setMapCenter([center.lng, center.lat]);
+    });
 
     const pmtilesUrl = 'output.pmtiles'; // ✅ From /public/output.pmtiles
     const sourceId = 'parcels';
@@ -397,82 +222,87 @@ function App() {
       }
     });
 
-    // Elevation measurement click handler
-    let elevationPointsLocal: [number, number][] = [];
+
     
-    map.on('click', async (e) => {
-      if (elevationMode) {
-        console.log('Elevation mode click detected');
+    // Combined click handler for both elevation tool and property selection
+    map.on('click', (e) => {
+      console.log('Map clicked, elevationToolActive:', elevationToolActiveRef.current, 'isDrawing:', isDrawingRef.current);
+      if (elevationToolActiveRef.current) {
+        // Elevation tool takes priority
+        console.log('Elevation tool click:', e.lngLat);
         
-        const newPoint: [number, number] = [e.lngLat.lng, e.lngLat.lat];
-        elevationPointsLocal.push(newPoint);
-        const pointIndex = elevationPointsLocal.length;
-        
-        console.log(`Adding point ${pointIndex}:`, newPoint);
-        console.log('Current points:', elevationPointsLocal);
-
-        // Add point marker with unique ID
-        const pointId = `elevation-point-${Date.now()}-${pointIndex}`;
-        
-        // Check if source already exists and remove it
-        if (map.getSource(pointId)) {
-          map.removeLayer(pointId);
-          map.removeSource(pointId);
+        if (!isDrawingRef.current) {
+          // Start drawing
+          console.log('Starting to draw, setting isDrawing to true');
+          setIsDrawing(true);
+          setElevationPoints([[e.lngLat.lng, e.lngLat.lat]]);
+          
+          // Add visual line
+          const lineId = 'elevation-line';
+          if (map.getSource(lineId)) {
+            map.removeLayer(lineId);
+            map.removeSource(lineId);
+          }
+          
+          map.addSource(lineId, {
+            type: 'geojson',
+            data: {
+              type: 'FeatureCollection',
+              features: [{
+                type: 'Feature',
+                geometry: {
+                  type: 'LineString',
+                  coordinates: [[e.lngLat.lng, e.lngLat.lat]]
+                },
+                properties: {}
+              }]
+            }
+          });
+          
+          map.addLayer({
+            id: lineId,
+            type: 'line',
+            source: lineId,
+            paint: {
+              'line-color': '#ff0000',
+              'line-width': 3,
+              'line-dasharray': [2, 2]
+            }
+          });
+        } else {
+          // Add point to existing line
+          console.log('Adding point to existing line, current points:', elevationPointsRef.current.length);
+          const newPoint: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+          const newPoints = [...elevationPointsRef.current, newPoint];
+          setElevationPoints(newPoints);
+          
+          // Update visual line
+          const lineId = 'elevation-line';
+          const source = map.getSource(lineId) as maplibregl.GeoJSONSource;
+          if (source) {
+            source.setData({
+              type: 'FeatureCollection',
+              features: [{
+                type: 'Feature',
+                geometry: {
+                  type: 'LineString',
+                  coordinates: newPoints
+                },
+                properties: {}
+              }]
+            });
+          }
         }
-        
-        map.addSource(pointId, {
-          type: 'geojson',
-          data: {
-            type: 'FeatureCollection',
-            features: [{
-              type: 'Feature',
-              geometry: { type: 'Point', coordinates: newPoint },
-              properties: { label: `Point ${pointIndex}` }
-            }]
-          }
-        });
-
-        map.addLayer({
-          id: pointId,
-          type: 'circle',
-          source: pointId,
-          paint: {
-            'circle-radius': 8,
-            'circle-color': pointIndex === 1 ? '#ff0000' : '#0000ff',
-            'circle-stroke-color': '#ffffff',
-            'circle-stroke-width': 2
-          }
-        });
-
-        // Update React state
-        setElevationPoints([...elevationPointsLocal]);
-
-        // If we have 2 points, create elevation profile
-        if (elevationPointsLocal.length === 2) {
-          console.log('Creating elevation profile with 2 points');
-          const profileData = await createElevationProfile(map, elevationPointsLocal[0], elevationPointsLocal[1]);
-          if (profileData) {
-            console.log('Profile data received, showing chart');
-            setElevationData(profileData);
-            setShowElevationProfile(true);
-            console.log('Chart should now be visible');
-          } else {
-            console.log('No profile data received');
-          }
-          setElevationMode(false);
-          elevationPointsLocal = [];
-          setElevationPoints([]);
-        }
+        return; // Exit early to prevent property selection
       }
-    });
-
-    // Property click handler (only when not in elevation mode)
-    map.on('click', 'parcel-fill', (e) => {
-      if (elevationMode) return; // Skip if in elevation mode
+      
+      // Property selection (only when elevation tool is not active)
       const features = map.queryRenderedFeatures(e.point, {
         layers: ['parcel-fill'],
       });
-
+      
+      if (features.length === 0) return; // No property clicked
+      
       const feature = features[0];
       const geom = feature.geometry;
       if (geom.type !== 'Polygon') return;
@@ -540,132 +370,381 @@ function App() {
       }
     });
 
-    // Add keyboard listener to cancel elevation mode with Escape key
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && elevationMode) {
-        setElevationMode(false);
-        setElevationPoints([]);
-        elevationPointsLocal = [];
-        // Clear markers
-        const map = mapRef.current;
-        if (map) {
-          const layerIds = map.getStyle().layers?.map(layer => layer.id) || [];
-          const sourceIds = Object.keys(map.getStyle().sources || {});
-          
-          layerIds.forEach(id => {
-            if (id.includes('elevation-point-') || id.includes('elevation-line') || id.includes('elevation-start') || id.includes('elevation-end')) {
-              try {
-                map.removeLayer(id);
-              } catch (e) {
-                console.log('Layer already removed:', id);
-              }
-            }
-          });
-          
-          sourceIds.forEach(id => {
-            if (id.includes('elevation-point-') || id.includes('elevation-line') || id.includes('elevation-start') || id.includes('elevation-end')) {
-              try {
-                map.removeSource(id);
-              } catch (e) {
-                console.log('Source already removed:', id);
-              }
-            }
-          });
-        }
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-
     return () => {
       map.remove();
       maplibregl.removeProtocol('pmtiles');
-      document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [style, elevationMode]);
+  }, [style]);
+
+  // Handle search result selection
+  const handleSearchSelect = (result: any) => {
+    if (mapRef.current) {
+      const map = mapRef.current;
+      
+      if (result.bbox) {
+        // Fit to bounding box if available
+        map.fitBounds(result.bbox as [number, number, number, number], {
+          padding: 50,
+          duration: 1000
+        });
+      } else {
+        // Fly to center point
+        map.flyTo({
+          center: result.center,
+          zoom: 16,
+          duration: 1000
+        });
+      }
+    }
+  };
+
+  // Control map dragging based on elevation tool state
+  useEffect(() => {
+    if (mapRef.current) {
+      const map = mapRef.current;
+      if (elevationToolActive) {
+        map.dragPan.disable();
+        map.dragRotate.disable();
+        map.getCanvas().style.cursor = 'crosshair';
+        console.log('Elevation tool activated - map dragging disabled');
+      } else {
+        map.dragPan.enable();
+        map.dragRotate.enable();
+        map.getCanvas().style.cursor = '';
+        console.log('Elevation tool deactivated - map dragging enabled');
+      }
+    }
+  }, [elevationToolActive]);
+
+  // Update refs when state changes
+  useEffect(() => {
+    elevationToolActiveRef.current = elevationToolActive;
+  }, [elevationToolActive]);
+
+  useEffect(() => {
+    isDrawingRef.current = isDrawing;
+  }, [isDrawing]);
+
+  useEffect(() => {
+    elevationPointsRef.current = elevationPoints;
+  }, [elevationPoints]);
 
   return (
-    <div className="w-screen h-screen flex flex-col">
-      <div className="p-4 bg-gray-800 text-white z-10 relative">
-        <h1 className="text-2xl font-bold">Property Viewer</h1>
-        <div className="mt-2 space-x-2">
-          <button
-            onClick={() => setStyle('default')}
-            className={`px-3 py-1 rounded ${style === 'default' ? 'bg-white text-black' : 'bg-gray-700'}`}
-          >
-            Default
-          </button>
-          <button
-            onClick={() => setStyle('satellite')}
-            className={`px-3 py-1 rounded ${style === 'satellite' ? 'bg-white text-black' : 'bg-gray-700'}`}
-          >
-            Satellite
-          </button>
-          <button
-            onClick={() => {
-              if (elevationMode) {
-                // Cancel elevation mode
-                setElevationMode(false);
-                setElevationPoints([]);
-                // Clear elevation markers
-                const map = mapRef.current;
-                if (map) {
-                  // Remove all elevation-related layers and sources
-                  const layerIds = map.getStyle().layers?.map(layer => layer.id) || [];
-                  const sourceIds = Object.keys(map.getStyle().sources || {});
-                  
-                  layerIds.forEach(id => {
-                    if (id.includes('elevation-point-') || id.includes('elevation-line') || id.includes('elevation-start') || id.includes('elevation-end')) {
-                      try {
-                        map.removeLayer(id);
-                      } catch (e) {
-                        console.log('Layer already removed:', id);
-                      }
-                    }
-                  });
-                  
-                  sourceIds.forEach(id => {
-                    if (id.includes('elevation-point-') || id.includes('elevation-line') || id.includes('elevation-start') || id.includes('elevation-end')) {
-                      try {
-                        map.removeSource(id);
-                      } catch (e) {
-                        console.log('Source already removed:', id);
-                      }
-                    }
-                  });
-                }
-                // Reset local points array
-                elevationPointsLocal = [];
-              } else {
-                // Start elevation mode
-                setElevationMode(true);
-                setElevationPoints([]);
-              }
-            }}
-            className={`px-3 py-1 rounded ${elevationMode ? 'bg-red-600 text-white' : 'bg-gray-700'}`}
-          >
-            {elevationMode ? 'Cancel Elevation' : 'Elevation Profile'}
-          </button>
-        </div>
-        {elevationMode && (
-          <div className="mt-2 text-sm text-yellow-300">
-            {elevationPoints.length === 0 && "Click two points on the map to create an elevation profile"}
-            {elevationPoints.length === 1 && "Click the second point to complete the elevation profile"}
-            {elevationPoints.length === 2 && "Creating elevation profile..."}
-          </div>
-        )}
-      </div>
-      <div className="flex-1 relative">
+    <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
+      {/* Main Map Area - Full Screen */}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 0 }}>
         <div 
           ref={mapContainer} 
-          className="absolute inset-0 w-full h-full" 
-          style={{ width: '100%', height: '100%', minHeight: '400px' }}
+          style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0 }}
         />
       </div>
       
-      <ElevationProfile
-        isVisible={showElevationProfile}
-        onClose={() => setShowElevationProfile(false)}
+      {/* Sidebar Overlay */}
+      <div 
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          height: '100%',
+          backgroundColor: '#1f2937',
+          color: 'white',
+          transition: 'width 0.3s ease',
+          width: sidebarOpen ? '320px' : '48px',
+          zIndex: 10,
+          boxShadow: '2px 0 10px rgba(0,0,0,0.3)',
+          display: 'flex',
+          flexDirection: 'column'
+        }}
+      >
+        {/* Sidebar Header */}
+        <div style={{ padding: '16px', borderBottom: '1px solid #374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          {sidebarOpen && <h1 style={{ fontSize: '20px', fontWeight: 'bold', margin: 0 }}>Property Viewer</h1>}
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            style={{
+              padding: '8px',
+              backgroundColor: '#374151',
+              border: 'none',
+              borderRadius: '4px',
+              color: 'white',
+              cursor: 'pointer',
+              transition: 'background-color 0.2s'
+            }}
+            onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#4b5563'}
+            onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#374151'}
+            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          >
+            {sidebarOpen ? '◀' : '▶'}
+          </button>
+        </div>
+        
+        {/* Sidebar Content */}
+        {sidebarOpen ? (
+          <div style={{ flex: 1, padding: '16px', overflowY: 'auto' }}>
+            {/* Search */}
+            <div style={{ marginBottom: '24px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>Search</h2>
+              <Search onLocationSelect={handleSearchSelect} mapCenter={mapCenter} />
+            </div>
+            
+            {/* Map Style */}
+            <div style={{ marginBottom: '24px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>Map Style</h2>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <button
+                  onClick={() => setStyle('default')}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '4px',
+                    textAlign: 'left',
+                    transition: 'all 0.2s',
+                    backgroundColor: style === 'default' ? 'white' : '#374151',
+                    color: style === 'default' ? 'black' : 'white',
+                    border: 'none',
+                    cursor: 'pointer'
+                  }}
+                  onMouseOver={(e) => {
+                    if (style !== 'default') {
+                      e.currentTarget.style.backgroundColor = '#4b5563';
+                    }
+                  }}
+                  onMouseOut={(e) => {
+                    if (style !== 'default') {
+                      e.currentTarget.style.backgroundColor = '#374151';
+                    }
+                  }}
+                >
+                  🗺️ Default
+                </button>
+                <button
+                  onClick={() => setStyle('satellite')}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '4px',
+                    textAlign: 'left',
+                    transition: 'all 0.2s',
+                    backgroundColor: style === 'satellite' ? 'white' : '#374151',
+                    color: style === 'satellite' ? 'black' : 'white',
+                    border: 'none',
+                    cursor: 'pointer'
+                  }}
+                  onMouseOver={(e) => {
+                    if (style !== 'satellite') {
+                      e.currentTarget.style.backgroundColor = '#4b5563';
+                    }
+                  }}
+                  onMouseOut={(e) => {
+                    if (style !== 'satellite') {
+                      e.currentTarget.style.backgroundColor = '#374151';
+                    }
+                  }}
+                >
+                  🛰️ Satellite
+                </button>
+              </div>
+            </div>
+            
+            {/* Elevation Tool */}
+            <div style={{ marginBottom: '24px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>Elevation Tool</h2>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <button
+                  onClick={() => {
+                    console.log('Elevation tool button clicked, current state:', elevationToolActive);
+                    setElevationToolActive(!elevationToolActive);
+                    if (elevationToolActive) {
+                      // Deactivate tool
+                      console.log('Deactivating elevation tool');
+                      setIsDrawing(false);
+                      setElevationPoints([]);
+                      setShowElevationChart(false);
+                      setElevationData(null);
+                      
+                      // Clear visual line
+                      const map = mapRef.current;
+                      if (map) {
+                        const lineId = 'elevation-line';
+                        if (map.getSource(lineId)) {
+                          map.removeLayer(lineId);
+                          map.removeSource(lineId);
+                        }
+                      }
+                    } else {
+                      console.log('Activating elevation tool');
+                    }
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '4px',
+                    transition: 'all 0.2s',
+                    backgroundColor: elevationToolActive ? '#059669' : '#2563eb',
+                    color: 'white',
+                    border: 'none',
+                    cursor: 'pointer'
+                  }}
+                  onMouseOver={(e) => {
+                    e.currentTarget.style.backgroundColor = elevationToolActive ? '#047857' : '#1d4ed8';
+                  }}
+                  onMouseOut={(e) => {
+                    e.currentTarget.style.backgroundColor = elevationToolActive ? '#059669' : '#2563eb';
+                  }}
+                >
+                  {elevationToolActive ? '🎨 Tool Active' : '📏 Activate Tool'}
+                </button>
+                
+                {elevationToolActive && isDrawing && elevationPoints.length >= 2 && (
+                  <>
+                    <button
+                      onClick={async () => {
+                        setIsLoading(true);
+                        try {
+                          const data = await createElevationProfile(elevationPoints);
+                          setElevationData(data);
+                          setShowElevationChart(true);
+                        } catch (error) {
+                          console.error('Error creating elevation profile:', error);
+                          alert('Error creating elevation profile. Please try again.');
+                        } finally {
+                          setIsLoading(false);
+                        }
+                      }}
+                      disabled={isLoading}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        borderRadius: '4px',
+                        transition: 'all 0.2s',
+                        backgroundColor: '#059669',
+                        color: 'white',
+                        border: 'none',
+                        cursor: isLoading ? 'not-allowed' : 'pointer',
+                        opacity: isLoading ? 0.5 : 1
+                      }}
+                      onMouseOver={(e) => {
+                        if (!isLoading) {
+                          e.currentTarget.style.backgroundColor = '#047857';
+                        }
+                      }}
+                      onMouseOut={(e) => {
+                        if (!isLoading) {
+                          e.currentTarget.style.backgroundColor = '#059669';
+                        }
+                      }}
+                    >
+                      {isLoading ? '⏳ Loading...' : '📊 Show Profile'}
+                    </button>
+                    
+                    <button
+                      onClick={() => {
+                        setIsDrawing(false);
+                        setElevationPoints([]);
+                        setShowElevationChart(false);
+                        setElevationData(null);
+                        
+                        // Clear visual line
+                        const map = mapRef.current;
+                        if (map) {
+                          const lineId = 'elevation-line';
+                          if (map.getSource(lineId)) {
+                            map.removeLayer(lineId);
+                            map.removeSource(lineId);
+                          }
+                        }
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        borderRadius: '4px',
+                        transition: 'all 0.2s',
+                        backgroundColor: '#dc2626',
+                        color: 'white',
+                        border: 'none',
+                        cursor: 'pointer'
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.backgroundColor = '#b91c1c';
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.backgroundColor = '#dc2626';
+                      }}
+                    >
+                      ❌ Clear Line
+                    </button>
+                  </>
+                )}
+                
+                {/* Show/Hide Chart Button */}
+                {elevationData && (
+                  <button
+                    onClick={() => setShowElevationChart(!showElevationChart)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      borderRadius: '4px',
+                      transition: 'all 0.2s',
+                      backgroundColor: '#7c3aed',
+                      color: 'white',
+                      border: 'none',
+                      cursor: 'pointer'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.backgroundColor = '#6d28d9';
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.backgroundColor = '#7c3aed';
+                    }}
+                  >
+                    {showElevationChart ? '📊 Hide Chart' : '📊 Show Chart'}
+                  </button>
+                )}
+              </div>
+            </div>
+            
+            {/* Instructions */}
+            <div style={{ 
+              fontSize: '14px', 
+              color: '#fbbf24', 
+              backgroundColor: '#374151', 
+              padding: '12px', 
+              borderRadius: '4px',
+              marginTop: '16px'
+            }}>
+              {!elevationToolActive && "💡 Click on properties to view measurements"}
+              {elevationToolActive && !isDrawing && "🎨 Tool active! Click on the map to start drawing your elevation line"}
+              {elevationToolActive && isDrawing && elevationPoints.length === 1 && "🎨 Drawing line... Click to add more points"}
+              {elevationToolActive && isDrawing && elevationPoints.length >= 2 && `🎨 Line drawn (${elevationPoints.length} points). Click 'Show Profile' to generate elevation chart`}
+            </div>
+          </div>
+        ) : (
+          // Collapsed sidebar content - just show a toggle button
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button
+              onClick={() => setSidebarOpen(true)}
+              style={{
+                padding: '8px',
+                backgroundColor: '#374151',
+                border: 'none',
+                borderRadius: '4px',
+                color: 'white',
+                cursor: 'pointer',
+                transition: 'background-color 0.2s'
+              }}
+              onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#4b5563'}
+              onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#374151'}
+              title="Expand sidebar"
+            >
+              ▶
+            </button>
+          </div>
+        )}
+      </div>
+      
+      <ElevationChart
+        isVisible={showElevationChart}
+        onClose={() => setShowElevationChart(false)}
         elevationData={elevationData}
       />
     </div>
