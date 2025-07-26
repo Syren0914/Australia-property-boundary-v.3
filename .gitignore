@@ -1,3 +1,10 @@
 boundary-viewer/public/output.pmtiles
 
 .vercel
+boundary-viewer/public/final.pmtiles
+boundary-viewer/public/output1.pmtiles
+boundary-viewer/public/property_boundaries.pmtiles
+boundary-viewer/public/property_boundaries.geojson
+public/property_boundaries.geojson
+public/property_boundaries.pmtiles
+tippecanoe/
