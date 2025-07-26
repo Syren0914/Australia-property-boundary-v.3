@@ -156,8 +156,8 @@ function AppContent() {
       setMapCenter([center.lng, center.lat]);
     });
 
-    const pmtilesUrl = 'https://github.com/Syren0914/pmtiles-data/releases/download/map/output.pmtiles';
-    const sourceId = 'parcels';
+    const pmtilesUrl = 'https://wxwbxupdisbofesaygqj.functions.supabase.co/pmtiles-proxy';
+    const sourceId = 'property_boundaries';
 
     map.on('style.load', () => {
       console.log('Style loaded, adding PMTiles source...');
@@ -201,7 +201,7 @@ function AppContent() {
             id: 'parcel-fill',
             type: 'fill',
             source: sourceId,
-            'source-layer': 'parcels',
+            'source-layer': 'property_boundaries',
             paint: {
               'fill-color': '#A259FF',
               'fill-opacity': 0.2,
@@ -221,7 +221,7 @@ function AppContent() {
             id: 'parcel-outline',
             type: 'line',
             source: sourceId,
-            'source-layer': 'parcels',
+            'source-layer': 'property_boundaries',
             paint: {
               'line-color': '#7000FF',
               'line-width': 1,
