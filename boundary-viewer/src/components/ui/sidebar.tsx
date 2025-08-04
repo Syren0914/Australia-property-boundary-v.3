@@ -78,6 +78,12 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
         
       }}>
         {/* Menu Button */}
+        <img src="/looplet-dark.png" alt="Looplet" style={{width:'160px', marginRight:'10px', display: style === 'dark' ? 'none' : 'block'}} />
+        <img src="/looplet.png" alt="Looplet" style={{width:'140px', marginRight:'10px', display: style === 'dark' ? 'block' : 'none'}} />
+
+        
+
+
         {/* <button
           onClick={() => setSidebarOpen(!sidebarOpen)}
           style={{
