@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { SearchIcon } from 'lucide-react';
 
 interface SearchResult {
   id: string;
@@ -10,6 +11,10 @@ interface SearchResult {
     city?: string;
     state?: string;
     country?: string;
+    housenumber?: string;
+    street?: string;
+    suburb?: string;
+    postcode?: string;
   };
 }
 
@@ -27,16 +32,25 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) =
   const searchRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Queensland, Australia bounds (approximate)
+  const qldBounds = {
+    west: 138.0,  // Western boundary
+    east: 153.5,  // Eastern boundary  
+    south: -29.2, // Southern boundary
+    north: -9.0   // Northern boundary
+  };
+
   // Debounce search requests
   useEffect(() => {
     const timeoutId = setTimeout(() => {
       if (query.trim().length >= 2) {
+        console.log('Performing search for:', query);
         performSearch(query);
       } else {
         setSuggestions([]);
         setShowSuggestions(false);
       }
-    }, 300);
+    }, 200); // Reduced debounce time for faster response
 
     return () => clearTimeout(timeoutId);
   }, [query]);
@@ -57,34 +71,120 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) =
   const performSearch = async (searchQuery: string) => {
     setIsLoading(true);
     try {
-      // Use MapTiler geocoding API with proximity bias to current map center
+      // Use Google Geocoding API for better address results
+      const params = new URLSearchParams({
+        address: searchQuery,
+        region: 'au',
+        components: 'country:AU|administrative_area:QLD',
+        key: 'AIzaSyDWqaq2LaVvqIJgNDEiD7_34MOOyel8d4s'
+      });
+
       const response = await fetch(
-        `https://api.maptiler.com/geocoding/${encodeURIComponent(searchQuery)}.json?key=s9pdXU8BxZTbUAwzlkhL&proximity=${mapCenter[0]},${mapCenter[1]}&limit=8&types=address,poi,place`
+        `https://maps.googleapis.com/maps/api/geocode/json?${params}`
       );
       
-      if (response.ok) {
-        const data = await response.json();
-        const results: SearchResult[] = data.features?.map((feature: any) => ({
-          id: feature.id,
-          place_name: feature.place_name,
-          center: feature.center,
-          bbox: feature.bbox,
-          properties: {
-            address: feature.properties?.address,
-            city: feature.properties?.city,
-            state: feature.properties?.state,
-            country: feature.properties?.country,
-          }
-        })) || [];
+             if (response.ok) {
+         const data = await response.json();
+         console.log('Google search response:', data);
+         const results: SearchResult[] = data.results?.map((result: any, index: number) => ({
+           id: `google_${index}_${Date.now()}`, // Unique ID to prevent duplicates
+           place_name: result.formatted_address,
+           center: [result.geometry.location.lng, result.geometry.location.lat],
+           bbox: result.geometry.viewport ? [
+             result.geometry.viewport.southwest.lng,
+             result.geometry.viewport.southwest.lat,
+             result.geometry.viewport.northeast.lng,
+             result.geometry.viewport.northeast.lat
+           ] : undefined,
+           properties: {
+             address: result.formatted_address,
+             city: result.address_components?.find((comp: any) => comp.types.includes('locality'))?.long_name,
+             state: result.address_components?.find((comp: any) => comp.types.includes('administrative_area_level_1'))?.long_name,
+             country: result.address_components?.find((comp: any) => comp.types.includes('country'))?.long_name,
+             housenumber: result.address_components?.find((comp: any) => comp.types.includes('street_number'))?.long_name,
+             street: result.address_components?.find((comp: any) => comp.types.includes('route'))?.long_name,
+             suburb: result.address_components?.find((comp: any) => comp.types.includes('sublocality'))?.long_name,
+             postcode: result.address_components?.find((comp: any) => comp.types.includes('postal_code'))?.long_name,
+           }
+         })) || [];
         
-        setSuggestions(results);
-        setShowSuggestions(results.length > 0);
+        // More inclusive filtering for better address coverage
+        const filteredResults = results.filter(result => {
+          const properties = result.properties;
+          const placeName = result.place_name.toLowerCase();
+          
+          // Include all results that might be relevant
+          if (properties?.country === 'AU') {
+            return true;
+          }
+          
+          // Include any result within Queensland bounds
+          const [lng, lat] = result.center;
+          if (lng >= qldBounds.west && lng <= qldBounds.east && 
+              lat >= qldBounds.south && lat <= qldBounds.north) {
+            return true;
+          }
+          
+          // Include any result that might be relevant
+          return true;
+        });
+        
+        console.log('Filtered results:', filteredResults);
+        setSuggestions(filteredResults);
+        setShowSuggestions(filteredResults.length > 0);
         setSelectedIndex(-1);
       }
     } catch (error) {
       console.error('Search error:', error);
-      setSuggestions([]);
-      setShowSuggestions(false);
+      
+             // Fallback search with Google API (no restrictions)
+       try {
+         const fallbackParams = new URLSearchParams({
+           address: searchQuery,
+           key: 'AIzaSyDWqaq2LaVvqIJgNDEiD7_34MOOyel8d4s'
+         });
+         
+         const fallbackResponse = await fetch(
+           `https://maps.googleapis.com/maps/api/geocode/json?${fallbackParams}`
+         );
+        
+                 if (fallbackResponse.ok) {
+           const fallbackData = await fallbackResponse.json();
+           console.log('Google fallback response:', fallbackData);
+           const fallbackResults: SearchResult[] = fallbackData.results?.map((result: any, index: number) => ({
+             id: `google_fallback_${index}_${Date.now()}`,
+             place_name: result.formatted_address,
+             center: [result.geometry.location.lng, result.geometry.location.lat],
+             bbox: result.geometry.viewport ? [
+               result.geometry.viewport.southwest.lng,
+               result.geometry.viewport.southwest.lat,
+               result.geometry.viewport.northeast.lng,
+               result.geometry.viewport.northeast.lat
+             ] : undefined,
+             properties: {
+               address: result.formatted_address,
+               city: result.address_components?.find((comp: any) => comp.types.includes('locality'))?.long_name,
+               state: result.address_components?.find((comp: any) => comp.types.includes('administrative_area_level_1'))?.long_name,
+               country: result.address_components?.find((comp: any) => comp.types.includes('country'))?.long_name,
+               housenumber: result.address_components?.find((comp: any) => comp.types.includes('street_number'))?.long_name,
+               street: result.address_components?.find((comp: any) => comp.types.includes('route'))?.long_name,
+               suburb: result.address_components?.find((comp: any) => comp.types.includes('sublocality'))?.long_name,
+               postcode: result.address_components?.find((comp: any) => comp.types.includes('postal_code'))?.long_name,
+             }
+           })) || [];
+          
+          console.log('Fallback results:', fallbackResults);
+          setSuggestions(fallbackResults);
+          setShowSuggestions(fallbackResults.length > 0);
+        } else {
+          setSuggestions([]);
+          setShowSuggestions(false);
+        }
+                      } catch (fallbackError) {
+           console.error('Google fallback search also failed:', fallbackError);
+           setSuggestions([]);
+           setShowSuggestions(false);
+         }
     } finally {
       setIsLoading(false);
     }
@@ -131,6 +231,10 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) =
     if (suggestions.length > 0) {
       setShowSuggestions(true);
     }
+    // Also show suggestions if there's a query and we're focused
+    if (query.trim().length >= 2 && suggestions.length > 0) {
+      setShowSuggestions(true);
+    }
   };
 
   const getHighlightedText = (text: string, query: string) => {
@@ -141,41 +245,103 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) =
     
     return parts.map((part, index) => 
       regex.test(part) ? (
-        <span key={index} className="font-semibold text-blue-600 bg-blue-100">
+        <span key={index} style={{ fontWeight: 'bold', color: '#2563eb', backgroundColor: '#dbeafe' }}>
           {part}
         </span>
       ) : part
     );
   };
 
+  const formatAddress = (result: SearchResult) => {
+    const props = result.properties;
+    const parts = [];
+    
+    if (props.housenumber && props.street) {
+      parts.push(`${props.housenumber} ${props.street}`);
+    } else if (props.street) {
+      parts.push(props.street);
+    }
+    
+    if (props.suburb) {
+      parts.push(props.suburb);
+    }
+    
+    if (props.city && props.city !== props.suburb) {
+      parts.push(props.city);
+    }
+    
+    if (props.postcode) {
+      parts.push(`QLD ${props.postcode}`);
+    } else {
+      parts.push('QLD');
+    }
+    
+    return parts.join(', ');
+  };
+
   return (
-    <div ref={searchRef} className="relative w-full">
-      <div className="relative">
+    <div ref={searchRef} style={{ position: 'relative', width: '100%' }}>
+      <div style={{ position: 'relative' }}>
         <input
           ref={inputRef}
           type="text"
           value={query}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
-          onFocus={handleInputFocus}
-          placeholder="Search..."
-          className="w-full px-2 py-1 pl-6 pr-6 text-xs bg-white border border-gray-300 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+          onFocus={(e) => {
+            handleInputFocus();
+            e.target.style.borderColor = '#4285f4';
+            e.target.style.boxShadow = '0 0 0 2px rgba(66, 133, 244, 0.2), 0 2px 8px rgba(0,0,0,0.15)';
+          }}
+          placeholder="Search for an address.."
+          style={{
+            width: '100%',
+            padding: '12px 16px',
+            paddingLeft: '40px',
+            fontSize: '16px',
+            backgroundColor: 'white',
+            border: '1px solid #e0e0e0',
+            borderRadius: '24px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+            color: '#333', 
+            outline: 'none',
+            transition: 'border-color 0.2s, box-shadow 0.2s'
+          }}
+          onBlur={(e) => {
+            e.target.style.borderColor = '#e0e0e0';
+            e.target.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)';
+          }}
         />
         
         {/* Search Icon */}
-        {/* <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
-          <svg className="h-3 w-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-        </div> */}
+        <div style={{ 
+          position: 'absolute', 
+          scale: '0.7',
+          left: '12px', 
+          top: '45%', 
+          transform: 'translateY(-50%)',
+          pointerEvents: 'none',
+          color: '#666'
+        }}>
+          <SearchIcon />
+        </div>
 
         {/* Loading Spinner */}
         {isLoading && (
-          <div className="absolute inset-y-0 right-0 pr-2 flex items-center">
-            {/* <svg className="animate-spin h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg> */}
+          <div style={{ 
+            position: 'absolute', 
+            right: '8px', 
+            top: '50%', 
+            transform: 'translateY(-50%)'
+          }}>
+            <div style={{ 
+              width: '16px', 
+              height: '16px', 
+              border: '2px solid #e0e0e0',
+              borderTop: '2px solid #4285f4',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite'
+            }} />
           </div>
         )}
 
@@ -188,43 +354,79 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) =
               setShowSuggestions(false);
               inputRef.current?.focus();
             }}
-            className="absolute inset-y-0 right-0 pr-2 flex items-center text-gray-400 hover:text-gray-600"
+            style={{
+              position: 'absolute',
+              right: '8px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              color: '#6b7280',
+              cursor: 'pointer',
+              border: 'none',
+              background: 'none',
+              padding: '4px'
+            }}
+            onMouseOver={(e) => e.currentTarget.style.color = '#374151'}
+            onMouseOut={(e) => e.currentTarget.style.color = '#6b7280'}
           >
-            {/* <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg> */}
+            ✕
           </button>
         )}
       </div>
 
       {/* Suggestions Dropdown */}
       {showSuggestions && suggestions.length > 0 && (
-        <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-80 overflow-y-auto">
+        <div style={{
+          position: 'absolute',
+          zIndex: 50,
+          width: '100%',
+          marginTop: '4px',
+          backgroundColor: 'white',
+          border: '1px solid #e5e7eb',
+          borderRadius: '8px',
+          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+          maxHeight: '320px',
+          overflowY: 'auto'
+        }}>
           {suggestions.map((suggestion, index) => (
             <div
               key={suggestion.id}
               onClick={() => handleSelect(suggestion)}
-              className={`px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors ${
-                index === selectedIndex ? 'bg-blue-50 border-l-4 border-blue-500' : ''
-              } ${index === 0 ? 'rounded-t-lg' : ''} ${index === suggestions.length - 1 ? 'rounded-b-lg' : ''}`}
+              style={{
+                padding: '12px 16px',
+                cursor: 'pointer',
+                transition: 'background-color 0.2s',
+                backgroundColor: index === selectedIndex ? '#eff6ff' : 'transparent',
+                borderLeft: index === selectedIndex ? '4px solid #3b82f6' : 'none',
+                borderRadius: index === 0 ? '8px 8px 0 0' : index === suggestions.length - 1 ? '0 0 8px 8px' : '0'
+              }}
+              onMouseOver={(e) => {
+                if (index !== selectedIndex) {
+                  e.currentTarget.style.backgroundColor = '#f9fafb';
+                }
+              }}
+              onMouseOut={(e) => {
+                if (index !== selectedIndex) {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }
+              }}
             >
-              <div className="flex items-start space-x-3">
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
                 {/* Location Icon */}
-                <div className="flex-shrink-0 mt-0.5">
-                  {/* <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div style={{ flexShrink: 0, marginTop: '2px' }}>
+                  <svg width="16" height="16" fill="none" stroke="#6b7280" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg> */}
+                  </svg>
                 </div>
                 
                 {/* Content */}
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-gray-900">
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '14px', fontWeight: 500, color: '#111827' }}>
                     {getHighlightedText(suggestion.place_name, query)}
                   </div>
-                  {suggestion.properties.address && (
-                    <div className="text-xs text-gray-500 mt-1">
-                      {suggestion.properties.address}
+                  {suggestion.properties.housenumber && (
+                    <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                      {formatAddress(suggestion)}
                     </div>
                   )}
                 </div>
@@ -236,9 +438,19 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) =
 
       {/* No Results */}
       {showSuggestions && suggestions.length === 0 && query.trim().length >= 2 && !isLoading && (
-        <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-4">
-          <div className="text-sm text-gray-500 text-center">
-            No results found for "{query}"
+        <div style={{
+          position: 'absolute',
+          zIndex: 50,
+          width: '100%',
+          marginTop: '4px',
+          backgroundColor: 'white',
+          border: '1px solid #e5e7eb',
+          borderRadius: '8px',
+          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+          padding: '16px'
+        }}>
+          <div style={{ fontSize: '14px', color: '#6b7280', textAlign: 'center' }}>
+            No addresses found for "{query}". Try a different search term or check spelling.
           </div>
         </div>
       )}

@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
 import { Protocol } from 'pmtiles';
 import * as turf from '@turf/turf';
 import { Search } from './Search';
 import { ElevationChart } from './ElevationChart';
+import { ModernSidebar } from './components/ui/sidebar';
 import { SubscriptionProvider, useSubscription } from './contexts/SubscriptionContext';
 import { SubscriptionModal } from './components/SubscriptionModal';
 import { UsageTracker } from './components/UsageTracker';
+
 
 // Google Elevation API function
 const getElevationData = async (lat: number, lng: number): Promise<number> => {
@@ -89,6 +90,9 @@ function AppContent() {
   const [showElevationChart, setShowElevationChart] = useState(false);
   const [elevationData, setElevationData] = useState<{ distances: number[]; elevations: number[] } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  
+  // Pinpoint marker state
+  const [selectedLocation, setSelectedLocation] = useState<{ center: [number, number]; place_name: string } | null>(null);
 
   // Subscription context
   const { 
@@ -107,10 +111,48 @@ function AppContent() {
     
     console.log('Map container dimensions:', mapContainer.current.offsetWidth, mapContainer.current.offsetHeight);
 
+    // Ensure the container has dimensions
+    if (mapContainer.current.offsetWidth === 0 || mapContainer.current.offsetHeight === 0) {
+      console.log('Container has no dimensions, waiting...');
+      return;
+    }
+
     const protocol = new Protocol();
     maplibregl.addProtocol('pmtiles', protocol.tile);
 
+    // Store current map state if map exists
+    let currentCenter: [number, number] = [153.026, -27.4705];
+    let currentZoom = 16;
+    let currentPitch = 45;
+    let currentBearing = -20;
+    
+    if (mapRef.current) {
+      const currentMap = mapRef.current;
+      try {
+        const center = currentMap.getCenter();
+        currentCenter = [center.lng, center.lat];
+        currentZoom = currentMap.getZoom();
+        currentPitch = currentMap.getPitch();
+        currentBearing = currentMap.getBearing();
+        
+        // Remove the old map safely
+        if (currentMap && typeof currentMap.remove === 'function') {
+          currentMap.remove();
+        }
+      } catch (error) {
+        console.log('Error removing old map:', error);
+        // Continue with default values if map removal fails
+      }
+    }
+
     console.log('Creating map with style:', style);
+    
+    // Safety check for container
+    if (!mapContainer.current) {
+      console.error('Map container is null');
+      return;
+    }
+    
     const map = new maplibregl.Map({
       container: mapContainer.current,
       style:
@@ -136,11 +178,13 @@ function AppContent() {
                 },
               ],
             }
+          : style === 'dark'
+          ? 'https://api.maptiler.com/maps/streets-dark/style.json?key=s9pdXU8BxZTbUAwzlkhL'
           : 'https://api.maptiler.com/maps/streets/style.json?key=s9pdXU8BxZTbUAwzlkhL',
-      center: [153.026, -27.4705],
-      zoom: 16,
-      pitch: 45,
-      bearing: -20,
+      center: currentCenter,
+      zoom: currentZoom,
+      pitch: currentPitch,
+      bearing: currentBearing,
       hash: true,
     });
     console.log('Map created successfully');
@@ -149,6 +193,20 @@ function AppContent() {
 
     map.addControl(new maplibregl.NavigationControl());
     map.addControl(new maplibregl.FullscreenControl());
+
+    // If this is a style change (not initial load), smoothly transition to the new view
+    if (mapRef.current && style !== 'default') {
+      // Small delay to ensure the map is fully loaded
+      setTimeout(() => {
+        map.flyTo({
+          center: currentCenter,
+          zoom: currentZoom,
+          pitch: currentPitch,
+          bearing: currentBearing,
+          duration: 500
+        });
+      }, 100);
+    }
 
     // Track map center for search proximity
     map.on('moveend', () => {
@@ -233,6 +291,48 @@ function AppContent() {
           console.error('Error loading PMTiles:', error);
         }
       }
+
+      // Add pinpoint marker source and layer
+      map.addSource('pinpoint-marker', {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: []
+        }
+      });
+
+             map.addLayer({
+         id: 'pinpoint-marker',
+         type: 'circle',
+         source: 'pinpoint-marker',
+         paint: {
+           'circle-radius': 12,
+           'circle-color': '#dc2626',
+           'circle-stroke-color': '#ffffff',
+           'circle-stroke-width': 3
+         }
+       });
+
+             // Add marker label
+       map.addLayer({
+         id: 'pinpoint-marker-label',
+         type: 'symbol',
+         source: 'pinpoint-marker',
+         layout: {
+           'text-field': ['get', 'name'],
+           'text-font': ['Arial Unicode MS Bold', 'Arial Bold', 'Helvetica Bold'],
+           'text-size': 14,
+           'text-offset': [0, -2],
+           'text-anchor': 'bottom',
+           'text-allow-overlap': true,
+           'text-ignore-placement': true
+         },
+         paint: {
+           'text-color': '#dc2626',
+           'text-halo-color': '#ffffff',
+           'text-halo-width': 2
+         }
+       });
     });
 
 
@@ -384,7 +484,9 @@ function AppContent() {
     });
 
     return () => {
-      map.remove();
+      if (map) {
+        map.remove();
+      }
       maplibregl.removeProtocol('pmtiles');
     };
   }, [style]);
@@ -400,8 +502,51 @@ function AppContent() {
     // Increment search usage
     incrementSearch();
 
+    // Clear any existing elevation tool state
+    if (elevationToolActive) {
+      setElevationToolActive(false);
+      setIsDrawing(false);
+      setElevationPoints([]);
+      setShowElevationChart(false);
+      setElevationData(null);
+      
+      // Clear visual line
+      const map = mapRef.current;
+      if (map) {
+        const lineId = 'elevation-line';
+        if (map.getSource(lineId)) {
+          map.removeLayer(lineId);
+          map.removeSource(lineId);
+        }
+      }
+    }
+
+    // Set selected location for marker
+    setSelectedLocation({
+      center: result.center,
+      place_name: result.place_name
+    });
+
     if (mapRef.current) {
       const map = mapRef.current;
+      
+      // Add pinpoint marker
+      const markerSource = map.getSource('pinpoint-marker') as maplibregl.GeoJSONSource;
+      if (markerSource) {
+        markerSource.setData({
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            geometry: {
+              type: 'Point',
+              coordinates: result.center
+            },
+            properties: {
+              name: result.place_name
+            }
+          }]
+        });
+      }
       
       if (result.bbox) {
         // Fit to bounding box if available
@@ -451,6 +596,21 @@ function AppContent() {
     elevationPointsRef.current = elevationPoints;
   }, [elevationPoints]);
 
+  // Function to clear pinpoint marker
+  const clearPinpointMarker = () => {
+    setSelectedLocation(null);
+    if (mapRef.current) {
+      const map = mapRef.current;
+      const markerSource = map.getSource('pinpoint-marker') as maplibregl.GeoJSONSource;
+      if (markerSource) {
+        markerSource.setData({
+          type: 'FeatureCollection',
+          features: []
+        });
+      }
+    }
+  };
+
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
       {/* Main Map Area - Full Screen */}
@@ -461,317 +621,35 @@ function AppContent() {
         />
       </div>
       
-      {/* Sidebar Overlay */}
-      <div 
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          height: '100%',
-          backgroundColor: '#1f2937',
-          color: 'white',
-          transition: 'width 0.3s ease',
-          width: sidebarOpen ? '320px' : '48px',
-          zIndex: 10,
-          boxShadow: '2px 0 10px rgba(0,0,0,0.3)',
-          display: 'flex',
-          flexDirection: 'column'
-        }}
-      >
-        {/* Sidebar Header */}
-        <div style={{ padding: '16px', borderBottom: '1px solid #374151', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          {sidebarOpen && <h1 style={{ fontSize: '20px', fontWeight: 'bold', margin: 0 }}>Property Viewer</h1>}
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            style={{
-              padding: '8px',
-              backgroundColor: '#374151',
-              border: 'none',
-              borderRadius: '4px',
-              color: 'white',
-              cursor: 'pointer',
-              transition: 'background-color 0.2s'
-            }}
-            onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#4b5563'}
-            onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#374151'}
-            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-          >
-            {sidebarOpen ? '◀' : '▶'}
-          </button>
-        </div>
-        
-        {/* Sidebar Content */}
-        {sidebarOpen ? (
-          <div style={{ flex: 1, padding: '16px', overflowY: 'auto' }}>
-            {/* Search */}
-            <div style={{ marginBottom: '24px' }}>
-              <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>Search</h2>
-              <Search onLocationSelect={handleSearchSelect} mapCenter={mapCenter} />
-            </div>
-            
-            {/* Map Style */}
-            <div style={{ marginBottom: '24px' }}>
-              <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>Map Style</h2>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <button
-                  onClick={() => setStyle('default')}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '4px',
-                    textAlign: 'left',
-                    transition: 'all 0.2s',
-                    backgroundColor: style === 'default' ? 'white' : '#374151',
-                    color: style === 'default' ? 'black' : 'white',
-                    border: 'none',
-                    cursor: 'pointer'
-                  }}
-                  onMouseOver={(e) => {
-                    if (style !== 'default') {
-                      e.currentTarget.style.backgroundColor = '#4b5563';
-                    }
-                  }}
-                  onMouseOut={(e) => {
-                    if (style !== 'default') {
-                      e.currentTarget.style.backgroundColor = '#374151';
-                    }
-                  }}
-                >
-                  🗺️ Default
-                </button>
-                <button
-                  onClick={() => setStyle('satellite')}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '4px',
-                    textAlign: 'left',
-                    transition: 'all 0.2s',
-                    backgroundColor: style === 'satellite' ? 'white' : '#374151',
-                    color: style === 'satellite' ? 'black' : 'white',
-                    border: 'none',
-                    cursor: 'pointer'
-                  }}
-                  onMouseOver={(e) => {
-                    if (style !== 'satellite') {
-                      e.currentTarget.style.backgroundColor = '#4b5563';
-                    }
-                  }}
-                  onMouseOut={(e) => {
-                    if (style !== 'satellite') {
-                      e.currentTarget.style.backgroundColor = '#374151';
-                    }
-                  }}
-                >
-                  🛰️ Satellite
-                </button>
-              </div>
-            </div>
-            
-            {/* Elevation Tool */}
-            <div style={{ marginBottom: '24px' }}>
-              <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>Elevation Tool</h2>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <button
-                  onClick={() => {
-                    console.log('Elevation tool button clicked, current state:', elevationToolActive);
-                    setElevationToolActive(!elevationToolActive);
-                    if (elevationToolActive) {
-                      // Deactivate tool
-                      console.log('Deactivating elevation tool');
-                      setIsDrawing(false);
-                      setElevationPoints([]);
-                      setShowElevationChart(false);
-                      setElevationData(null);
-                      
-                      // Clear visual line
-                      const map = mapRef.current;
-                      if (map) {
-                        const lineId = 'elevation-line';
-                        if (map.getSource(lineId)) {
-                          map.removeLayer(lineId);
-                          map.removeSource(lineId);
-                        }
-                      }
-                    } else {
-                      console.log('Activating elevation tool');
-                    }
-                  }}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '4px',
-                    transition: 'all 0.2s',
-                    backgroundColor: elevationToolActive ? '#059669' : '#2563eb',
-                    color: 'white',
-                    border: 'none',
-                    cursor: 'pointer'
-                  }}
-                  onMouseOver={(e) => {
-                    e.currentTarget.style.backgroundColor = elevationToolActive ? '#047857' : '#1d4ed8';
-                  }}
-                  onMouseOut={(e) => {
-                    e.currentTarget.style.backgroundColor = elevationToolActive ? '#059669' : '#2563eb';
-                  }}
-                >
-                  {elevationToolActive ? '🎨 Tool Active' : '📏 Activate Tool'}
-                </button>
-                
-                {elevationToolActive && isDrawing && elevationPoints.length >= 2 && (
-                  <>
-                    <button
-                      onClick={async () => {
-                        // Check if user can perform elevation analysis
-                        if (!canPerformAction('elevation')) {
-                          setShowSubscriptionModal(true);
-                          return;
-                        }
-
-                        setIsLoading(true);
-                        try {
-                          const data = await createElevationProfile(elevationPoints);
-                          setElevationData(data);
-                          setShowElevationChart(true);
-                          
-                          // Increment elevation profile usage
-                          incrementElevationProfile();
-                        } catch (error) {
-                          console.error('Error creating elevation profile:', error);
-                          alert('Error creating elevation profile. Please try again.');
-                        } finally {
-                          setIsLoading(false);
-                        }
-                      }}
-                      disabled={isLoading}
-                      style={{
-                        width: '100%',
-                        padding: '8px 12px',
-                        borderRadius: '4px',
-                        transition: 'all 0.2s',
-                        backgroundColor: '#059669',
-                        color: 'white',
-                        border: 'none',
-                        cursor: isLoading ? 'not-allowed' : 'pointer',
-                        opacity: isLoading ? 0.5 : 1
-                      }}
-                      onMouseOver={(e) => {
-                        if (!isLoading) {
-                          e.currentTarget.style.backgroundColor = '#047857';
-                        }
-                      }}
-                      onMouseOut={(e) => {
-                        if (!isLoading) {
-                          e.currentTarget.style.backgroundColor = '#059669';
-                        }
-                      }}
-                    >
-                      {isLoading ? '⏳ Loading...' : '📊 Show Profile'}
-                    </button>
-                    
-                    <button
-                      onClick={() => {
-                        setIsDrawing(false);
-                        setElevationPoints([]);
-                        setShowElevationChart(false);
-                        setElevationData(null);
-                        
-                        // Clear visual line
-                        const map = mapRef.current;
-                        if (map) {
-                          const lineId = 'elevation-line';
-                          if (map.getSource(lineId)) {
-                            map.removeLayer(lineId);
-                            map.removeSource(lineId);
-                          }
-                        }
-                      }}
-                      style={{
-                        width: '100%',
-                        padding: '8px 12px',
-                        borderRadius: '4px',
-                        transition: 'all 0.2s',
-                        backgroundColor: '#dc2626',
-                        color: 'white',
-                        border: 'none',
-                        cursor: 'pointer'
-                      }}
-                      onMouseOver={(e) => {
-                        e.currentTarget.style.backgroundColor = '#b91c1c';
-                      }}
-                      onMouseOut={(e) => {
-                        e.currentTarget.style.backgroundColor = '#dc2626';
-                      }}
-                    >
-                      ❌ Clear Line
-                    </button>
-                  </>
-                )}
-                
-                {/* Show/Hide Chart Button */}
-                {elevationData && (
-                  <button
-                    onClick={() => setShowElevationChart(!showElevationChart)}
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      borderRadius: '4px',
-                      transition: 'all 0.2s',
-                      backgroundColor: '#7c3aed',
-                      color: 'white',
-                      border: 'none',
-                      cursor: 'pointer'
-                    }}
-                    onMouseOver={(e) => {
-                      e.currentTarget.style.backgroundColor = '#6d28d9';
-                    }}
-                    onMouseOut={(e) => {
-                      e.currentTarget.style.backgroundColor = '#7c3aed';
-                    }}
-                  >
-                    {showElevationChart ? '📊 Hide Chart' : '📊 Show Chart'}
-                  </button>
-                )}
-              </div>
-            </div>
-            
-            {/* Instructions */}
-            <div style={{ 
-              fontSize: '14px', 
-              color: '#fbbf24', 
-              backgroundColor: '#374151', 
-              padding: '12px', 
-              borderRadius: '4px',
-              marginTop: '16px'
-            }}>
-              {!elevationToolActive && "💡 Click on properties to view measurements"}
-              {elevationToolActive && !isDrawing && "🎨 Tool active! Click on the map to start drawing your elevation line"}
-              {elevationToolActive && isDrawing && elevationPoints.length === 1 && "🎨 Drawing line... Click to add more points"}
-              {elevationToolActive && isDrawing && elevationPoints.length >= 2 && `🎨 Line drawn (${elevationPoints.length} points). Click 'Show Profile' to generate elevation chart`}
-            </div>
-          </div>
-        ) : (
-          // Collapsed sidebar content - just show a toggle button
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <button
-              onClick={() => setSidebarOpen(true)}
-              style={{
-                padding: '8px',
-                backgroundColor: '#374151',
-                border: 'none',
-                borderRadius: '4px',
-                color: 'white',
-                cursor: 'pointer',
-                transition: 'background-color 0.2s'
-              }}
-              onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#4b5563'}
-              onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#374151'}
-              title="Expand sidebar"
-            >
-              ▶
-            </button>
-          </div>
-        )}
-      </div>
+      {/* Modern Sidebar Component */}
+      <ModernSidebar
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+        style={style}
+        setStyle={setStyle}
+        elevationToolActive={elevationToolActive}
+        setElevationToolActive={setElevationToolActive}
+        isDrawing={isDrawing}
+        setIsDrawing={setIsDrawing}
+        elevationPoints={elevationPoints}
+        setElevationPoints={setElevationPoints}
+        showElevationChart={showElevationChart}
+        setShowElevationChart={setShowElevationChart}
+        elevationData={elevationData}
+        setElevationData={setElevationData}
+        isLoading={isLoading}
+        setIsLoading={setIsLoading}
+        selectedLocation={selectedLocation}
+        setSelectedLocation={setSelectedLocation}
+        mapCenter={mapCenter}
+        mapRef={mapRef}
+        handleSearchSelect={handleSearchSelect}
+        clearPinpointMarker={clearPinpointMarker}
+        createElevationProfile={createElevationProfile}
+        canPerformAction={canPerformAction}
+        setShowSubscriptionModal={setShowSubscriptionModal}
+        incrementElevationProfile={incrementElevationProfile}
+      />
       
       <ElevationChart
         isVisible={showElevationChart}
@@ -787,11 +665,11 @@ function AppContent() {
         currentPlan={currentPlan}
       />
 
-      <UsageTracker
+      {/* <UsageTracker
         currentPlan={currentPlan}
         usage={usage}
         onUpgrade={() => setShowSubscriptionModal(true)}
-      />
+      /> */}
     </div>
   );
 }
