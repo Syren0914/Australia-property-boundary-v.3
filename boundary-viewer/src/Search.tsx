@@ -23,7 +23,7 @@ interface SearchProps {
   mapCenter: [number, number];
 }
 
-export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) => {
+export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -111,7 +111,7 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) =
         // More inclusive filtering for better address coverage
         const filteredResults = results.filter(result => {
           const properties = result.properties;
-          const placeName = result.place_name.toLowerCase();
+
           
           // Include all results that might be relevant
           if (properties?.country === 'AU') {

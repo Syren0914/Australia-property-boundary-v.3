@@ -1,6 +1,6 @@
 import React from 'react';
 import { Search } from '../Search';
-import { ElevationChart } from '../ElevationChart';
+
 import { ThemeToggle } from './ui/theme-toggle';
 
 interface SidebarProps {
@@ -50,7 +50,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isLoading,
   setIsLoading,
   selectedLocation,
-  setSelectedLocation,
+
   mapCenter,
   mapRef,
   handleSearchSelect,

@@ -2,12 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { Protocol } from 'pmtiles';
 import * as turf from '@turf/turf';
-import { Search } from './Search';
 import { ElevationChart } from './ElevationChart';
 import { ModernSidebar } from './components/ui/sidebar';
 import { SubscriptionProvider, useSubscription } from './contexts/SubscriptionContext';
 import { SubscriptionModal } from './components/SubscriptionModal';
-import { UsageTracker } from './components/UsageTracker';
 
 
 // Google Elevation API function
@@ -97,7 +95,6 @@ function AppContent() {
   // Subscription context
   const { 
     currentPlan, 
-    usage, 
     showSubscriptionModal, 
     setShowSubscriptionModal, 
     incrementSearch, 

@@ -9,23 +9,45 @@ interface ThemeToggleProps {
 
 export const ThemeToggle: React.FC<ThemeToggleProps> = ({ isDark, onToggle }) => {
   return (
-    <div className="flex items-center space-x-3">
-      <div className={`flex items-center justify-center w-5 h-5 transition-all duration-300 ${
-        isDark ? 'opacity-40 scale-90' : 'opacity-100 scale-100'
-      }`}>
-        <Sun className="h-4 w-4 text-yellow-500" />
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      justifyContent: 'center',
+      width: '100%'
+    }}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '16px',
+        height: '16px',
+        transition: 'all 0.3s ease',
+        opacity: isDark ? 0.4 : 1,
+        transform: isDark ? 'scale(0.9)' : 'scale(1)'
+      }}>
+        <Sun style={{ width: '14px', height: '14px', color: '#f59e0b' , fontWeight: 'bold' }} />
       </div>
       
       <Switch
         checked={isDark}
         onCheckedChange={onToggle}
-        className="data-[state=checked]:bg-slate-700 data-[state=unchecked]:bg-slate-200 transition-all duration-300"
+        style={{
+          transition: 'all 0.3s ease'
+        }}
       />
       
-      <div className={`flex items-center justify-center w-5 h-5 transition-all duration-300 ${
-        isDark ? 'opacity-100 scale-100' : 'opacity-40 scale-90'
-      }`}>
-        <Moon className="h-4 w-4 text-blue-400" />
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '16px',
+        height: '16px',
+        transition: 'all 0.3s ease',
+        opacity: isDark ? 1 : 0.4,
+        transform: isDark ? 'scale(1)' : 'scale(0.9)'
+      }}>
+        <Moon style={{ width: '14px', height: '14px', color: '#60a5fa' }} />
       </div>
     </div>
   )

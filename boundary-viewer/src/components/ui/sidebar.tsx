@@ -1,7 +1,7 @@
 import React from 'react';
 import { Search } from '../../Search';
 import { ThemeToggle } from './theme-toggle';
-import { MapPin, Trash2, Ruler, Satellite, BarChart3, Menu } from 'lucide-react';
+import { MapPin, Trash2, Ruler, Satellite, BarChart3 } from 'lucide-react';
 
 interface ModernSidebarProps {
   sidebarOpen: boolean;
@@ -34,7 +34,7 @@ interface ModernSidebarProps {
 
 export const ModernSidebar: React.FC<ModernSidebarProps> = ({
   sidebarOpen,
-  setSidebarOpen,
+
   style,
   setStyle,
   elevationToolActive,
@@ -50,7 +50,7 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
   isLoading,
   setIsLoading,
   selectedLocation,
-  setSelectedLocation,
+
   mapCenter,
   mapRef,
   handleSearchSelect,
@@ -79,7 +79,7 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
       }}>
         {/* Menu Button */}
         <img src="/looplet-dark.png" alt="Looplet" style={{width:'160px', marginRight:'10px', display: style === 'dark' ? 'none' : 'block'}} />
-        <img src="/looplet.png" alt="Looplet" style={{width:'140px', marginRight:'10px', display: style === 'dark' ? 'block' : 'none'}} />
+        <img src="/looplet.png" alt="Looplet" style={{width:'140px', marginRight:'15px', display: style === 'dark' ? 'block' : 'none'}} />
 
         
 
@@ -128,9 +128,12 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
            <div style={{
              display: 'flex',
              alignItems: 'center',
-             padding: '8px 16px',
+             justifyContent: 'center',
+             padding: '6px 12px',
              backgroundColor: '#f8f9fa',
-             borderRadius: '24px',
+             borderRadius: '20px',
+             height: '32px',
+             minWidth: '80px',
              border: '1px solid #e0e0e0',
              boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
            }}>
