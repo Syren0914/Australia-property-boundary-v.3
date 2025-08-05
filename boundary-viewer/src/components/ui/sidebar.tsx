@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search } from '../../Search';
 import { ThemeToggle } from './theme-toggle';
-import { MapPin, Trash2, Ruler, Satellite, BarChart3, Menu, X, Sun, Moon, Map } from 'lucide-react';
+import { MapPin, Trash2, Ruler, Satellite, BarChart3, Menu, X, Map } from 'lucide-react';
 
 interface ModernSidebarProps {
   sidebarOpen: boolean;
@@ -34,7 +34,6 @@ interface ModernSidebarProps {
 
 export const ModernSidebar: React.FC<ModernSidebarProps> = ({
   sidebarOpen,
-  setSidebarOpen,
   style,
   setStyle,
   elevationToolActive,
