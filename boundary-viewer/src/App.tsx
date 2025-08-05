@@ -272,11 +272,16 @@ function AppContent() {
       // Only add property boundaries if zoom level is appropriate for mobile
       const shouldShowPropertyBoundaries = () => {
         const currentZoom = map.getZoom();
-        // On mobile, only show property boundaries at higher zoom levels to prevent crashes
+        // On mobile, show property boundaries at zoom 8+ for better performance
         if (isMobile) {
-          return currentZoom >= 12; // Only show at zoom 12+ on mobile
+          return currentZoom >= 8; // Show at zoom 8+ on mobile
         }
-        return currentZoom >= 8; // Show at zoom 8+ on desktop
+        return true; // Show at all zoom levels on desktop
+      };
+      
+      // Always add property boundaries on desktop, regardless of zoom
+      const shouldAlwaysAddOnDesktop = () => {
+        return !isMobile; // Always add on desktop
       };
 
       // Function to add property boundaries with mobile optimizations
@@ -288,19 +293,25 @@ function AppContent() {
               url: `pmtiles://${pmtilesUrl}`,
             });
 
-            // Mobile-optimized fill layer
-            map.addLayer({
-              id: 'parcel-fill',
-              type: 'fill',
-              source: sourceId,
-              'source-layer': 'property_boundaries',
-              minzoom: isMobile ? 12 : 8,
-              maxzoom: isMobile ? 18 : 20,
-              paint: {
-                'fill-color': '#A259FF',
-                'fill-opacity': isMobile ? 0.1 : 0.2, // Lower opacity on mobile
-              },
-            });
+                         // Mobile-optimized fill layer
+             const fillLayerConfig: any = {
+               id: 'parcel-fill',
+               type: 'fill',
+               source: sourceId,
+               'source-layer': 'property_boundaries',
+               minzoom: isMobile ? 8 : 6,
+               paint: {
+                 'fill-color': '#A259FF',
+                 'fill-opacity': isMobile ? 0.1 : 0.2, // Lower opacity on mobile
+               },
+             };
+             
+             // Only add maxzoom for mobile
+             if (isMobile) {
+               fillLayerConfig.maxzoom = 19;
+             }
+             
+             map.addLayer(fillLayerConfig);
 
             // Add hover effect for better UX (only on desktop)
             if (!isMobile) {
@@ -313,20 +324,26 @@ function AppContent() {
               });
             }
 
-            // Mobile-optimized outline layer
-            map.addLayer({
-              id: 'parcel-outline',
-              type: 'line',
-              source: sourceId,
-              'source-layer': 'property_boundaries',
-              minzoom: isMobile ? 12 : 8,
-              maxzoom: isMobile ? 18 : 20,
-              paint: {
-                'line-color': '#7000FF',
-                'line-width': isMobile ? 0.5 : 1, // Thinner lines on mobile
-                'line-opacity': isMobile ? 0.6 : 1, // Lower opacity on mobile
-              },
-            });
+                         // Mobile-optimized outline layer
+             const outlineLayerConfig: any = {
+               id: 'parcel-outline',
+               type: 'line',
+               source: sourceId,
+               'source-layer': 'property_boundaries',
+               minzoom: isMobile ? 8 : 7,
+               paint: {
+                 'line-color': '#7000FF',
+                 'line-width': isMobile ? 0.5 : 1, // Thinner lines on mobile
+                 'line-opacity': isMobile ? 0.6 : 1, // Lower opacity on mobile
+               },
+             };
+             
+             // Only add maxzoom for mobile
+             if (isMobile) {
+               outlineLayerConfig.maxzoom = 18;
+             }
+             
+             map.addLayer(outlineLayerConfig);
 
             console.log('PMTiles loaded with mobile optimizations!');
           } catch (error) {
@@ -336,19 +353,27 @@ function AppContent() {
       };
 
       // Add property boundaries if zoom level is appropriate
-      if (shouldShowPropertyBoundaries()) {
+      console.log('Current zoom level:', map.getZoom(), 'isMobile:', isMobile);
+      if (shouldShowPropertyBoundaries() || shouldAlwaysAddOnDesktop()) {
+        console.log('Adding property boundaries...');
         addPropertyBoundaries();
+      } else {
+        console.log('Not adding property boundaries - zoom level too low');
       }
 
       // Listen for zoom changes to show/hide property boundaries on mobile
       map.on('zoomend', () => {
-        
+        const currentZoom = map.getZoom();
         const hasSource = map.getSource(sourceId);
         
-        if (shouldShowPropertyBoundaries() && !hasSource) {
+        console.log('Zoom changed to:', currentZoom, 'isMobile:', isMobile, 'hasSource:', !!hasSource);
+        
+        if ((shouldShowPropertyBoundaries() || shouldAlwaysAddOnDesktop()) && !hasSource) {
+          console.log('Adding property boundaries on zoom change...');
           addPropertyBoundaries();
-        } else if (!shouldShowPropertyBoundaries() && hasSource) {
+        } else if (!shouldShowPropertyBoundaries() && !shouldAlwaysAddOnDesktop() && hasSource) {
           // Remove property boundaries on mobile when zoomed out too far
+          console.log('Removing property boundaries on zoom change...');
           try {
             if (map.getLayer('parcel-fill')) map.removeLayer('parcel-fill');
             if (map.getLayer('parcel-outline')) map.removeLayer('parcel-outline');
