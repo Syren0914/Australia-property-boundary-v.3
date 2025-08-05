@@ -342,7 +342,7 @@ function AppContent() {
 
       // Listen for zoom changes to show/hide property boundaries on mobile
       map.on('zoomend', () => {
-        const currentZoom = map.getZoom();
+        
         const hasSource = map.getSource(sourceId);
         
         if (shouldShowPropertyBoundaries() && !hasSource) {
