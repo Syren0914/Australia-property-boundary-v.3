@@ -203,7 +203,7 @@ function AppContent() {
       hash: true,
       // Mobile optimizations
       maxZoom: isMobile ? 18 : 20,
-      minZoom: isMobile ? 8 : 6,
+      minZoom: isMobile ? 10 : 6,
       maxPitch: isMobile ? 30 : 60,
       // Performance settings for mobile
       fadeDuration: isMobile ? 0 : 300,
@@ -272,9 +272,9 @@ function AppContent() {
       // Only add property boundaries if zoom level is appropriate for mobile
       const shouldShowPropertyBoundaries = () => {
         const currentZoom = map.getZoom();
-        // On mobile, show property boundaries at zoom 8+ for better performance
+        // On mobile, show property boundaries at zoom 10+ for better performance
         if (isMobile) {
-          return currentZoom >= 8; // Show at zoom 8+ on mobile
+          return currentZoom >= 10; // Show at zoom 10+ on mobile
         }
         return true; // Show at all zoom levels on desktop
       };
@@ -299,7 +299,7 @@ function AppContent() {
                type: 'fill',
                source: sourceId,
                'source-layer': 'property_boundaries',
-               minzoom: isMobile ? 8 : 6,
+               minzoom: isMobile ? 10 : 6,
                paint: {
                  'fill-color': '#A259FF',
                  'fill-opacity': isMobile ? 0.1 : 0.2, // Lower opacity on mobile
@@ -308,7 +308,7 @@ function AppContent() {
              
              // Only add maxzoom for mobile
              if (isMobile) {
-               fillLayerConfig.maxzoom = 19;
+               fillLayerConfig.maxzoom = 10;
              }
              
              map.addLayer(fillLayerConfig);
@@ -340,7 +340,7 @@ function AppContent() {
              
              // Only add maxzoom for mobile
              if (isMobile) {
-               outlineLayerConfig.maxzoom = 18;
+               outlineLayerConfig.maxzoom = 11;
              }
              
              map.addLayer(outlineLayerConfig);
