@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search } from '../../Search';
 import { ThemeToggle } from './theme-toggle';
-import { MapPin, Trash2, Ruler, Satellite, BarChart3 } from 'lucide-react';
+import { MapPin, Trash2, Ruler, Satellite, BarChart3, Menu, X, Sun, Moon, Map } from 'lucide-react';
 
 interface ModernSidebarProps {
   sidebarOpen: boolean;
@@ -34,7 +34,7 @@ interface ModernSidebarProps {
 
 export const ModernSidebar: React.FC<ModernSidebarProps> = ({
   sidebarOpen,
-
+  setSidebarOpen,
   style,
   setStyle,
   elevationToolActive,
@@ -50,7 +50,6 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
   isLoading,
   setIsLoading,
   selectedLocation,
-
   mapCenter,
   mapRef,
   handleSearchSelect,
@@ -60,187 +59,571 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
   setShowSubscriptionModal,
   incrementElevationProfile
 }) => {
+  const [isMobile, setIsMobile] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+
+  // Check if device is mobile
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth <= 768);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Close mobile menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (showMobileMenu && !target.closest('.mobile-menu-container')) {
+        setShowMobileMenu(false);
+      }
+    };
+
+    if (showMobileMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showMobileMenu]);
+
   return (
     <>
+    {/* Logo - Only show on desktop */}
+    {!isMobile && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            marginRight: '10px',
+            backgroundColor: 'white',
+            bottom: '10px',
+            left: '10px',
+            position: 'fixed',
+            height: '25px',
+            borderRadius: '20px',
+            padding: '10px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.12)'
+            
+          }}>
+            <img 
+              src="/looplet-dark.png" 
+              alt="Looplet" 
+              style={{
+                width: '120px', 
+                
+              }} 
+            />
+            
+          </div>
+        )}
       {/* Top Bar - Google Maps Style */}
       <div style={{
         position: 'fixed',
         top: 0,
         left: 0,
         right: 0,
-        height: '64px',
-        
-        
+        height: isMobile ? '56px' : '64px',
         zIndex: 1000,
         display: 'flex',
         alignItems: 'center',
-        padding: '0 16px',
-        
+        padding: isMobile ? '0 12px' : '0 16px',
       }}>
-        {/* Menu Button */}
-        <img src="/looplet-dark.png" alt="Looplet" style={{width:'160px', marginRight:'10px', display: style === 'dark' ? 'none' : 'block'}} />
-        <img src="/looplet.png" alt="Looplet" style={{width:'140px', marginRight:'15px', display: style === 'dark' ? 'block' : 'none'}} />
-
         
 
+        {/* Mobile Menu Button */}
+        {isMobile && (
+          <button
+            onClick={() => setShowMobileMenu(!showMobileMenu)}
+            style={{
+              width: '40px',
+              height: '40px',
+              borderRadius: '50%',
+              border: 'none',
+              backgroundColor: 'white',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginRight: '12px',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+              zIndex: 1001
+            }}
+            onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f5f5f5'}
+            onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'white'}
+          >
+            {showMobileMenu ? (
+              <div style={{width: '20px', height: '20px', color: '#666', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                <X />
+              </div>
+            ) : (
+              <div style={{width: '20px', height: '20px', color: '#666', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                <Menu />
+              </div>
+            )}
+          </button>
+        )}
 
-        {/* <button
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          style={{
-            width: '40px',
-            height: '40px',
-            borderRadius: '50%',
-            border: 'none',
-            backgroundColor: 'white',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginRight: '12px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.12)'
-          }}
-          onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f5f5f5'}
-          onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'white'}
-        >
-        <div style={{width: '20px', height: '20px', color: 'black', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-            <Menu />
-          </div>
-        </button> */}
-
-        {/* Search Bar */}
+        {/* Search Bar - Always show */}
         <div style={{
           flex: 1,
-          maxWidth: '500px',
+          maxWidth: isMobile ? 'none' : '300px',
           position: 'relative',
-          marginRight: '50px',
+          marginRight: isMobile ? '0' : '0px',
         }}>
           <Search onLocationSelect={handleSearchSelect} mapCenter={mapCenter} />
         </div>
 
-        {/* Tools Section */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          marginLeft: '16px'
-        }}>
-                     {/* Theme Toggle */}
-           <div style={{
-             display: 'flex',
-             alignItems: 'center',
-             justifyContent: 'center',
-             padding: '6px 12px',
-             backgroundColor: '#f8f9fa',
-             borderRadius: '20px',
-             height: '32px',
-             minWidth: '80px',
-             border: '1px solid #e0e0e0',
-             boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-           }}>
-             <ThemeToggle 
-               isDark={style === 'dark'} 
-               onToggle={(isDark) => setStyle(isDark ? 'dark' : 'default')} 
-             />
-           </div>
-
-          {/* Satellite Button */}
-          <button
-            onClick={() => setStyle('satellite')}
-            style={{
-              padding: '8px 12px',
-              borderRadius: '20px',
-              border: '1px solid #e0e0e0',
-              backgroundColor: style === 'satellite' ? '#4285f4' : '#f8f9fa',
-              color: style === 'satellite' ? 'white' : '#666',
-              cursor: 'pointer',
-              fontSize: '14px',
+        {/* Tools Section - Only show on desktop */}
+        {!isMobile && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            marginLeft: '16px'
+          }}>
+            {/* Theme Toggle */}
+            <div style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
-              transition: 'all 0.2s'
-            }}
-            onMouseOver={(e) => {
-              if (style !== 'satellite') {
-                e.currentTarget.style.backgroundColor = '#f0f0f0';
-              }
-            }}
-            onMouseOut={(e) => {
-              if (style !== 'satellite') {
-                e.currentTarget.style.backgroundColor = '#f8f9fa';
-              }
-            }}
-          >
-            <Satellite style={{ width: '16px', height: '16px' }} />
-            Satellite
-          </button>
+              justifyContent: 'center',
+              padding: '6px 12px',
+              backgroundColor: '#f8f9fa',
+              borderRadius: '20px',
+              height: '32px',
+              minWidth: '80px',
+              border: '1px solid #e0e0e0',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+            }}>
+              <ThemeToggle 
+                isDark={style === 'dark'} 
+                onToggle={(isDark) => setStyle(isDark ? 'dark' : 'default')} 
+              />
+            </div>
 
-          {/* Elevation Tool Button */}
-          <button
-            onClick={() => {
-              console.log('Elevation tool button clicked, current state:', elevationToolActive);
-              setElevationToolActive(!elevationToolActive);
-              if (elevationToolActive) {
-                console.log('Deactivating elevation tool');
-                setIsDrawing(false);
-                setElevationPoints([]);
-                setShowElevationChart(false);
-                setElevationData(null);
-                
-                const map = mapRef.current;
-                if (map) {
-                  const lineId = 'elevation-line';
-                  if (map.getSource(lineId)) {
-                    map.removeLayer(lineId);
-                    map.removeSource(lineId);
-                  }
+            {/* Satellite Button */}
+            <button
+              onClick={() => setStyle('satellite')}
+              style={{
+                padding: '8px 12px',
+                borderRadius: '20px',
+                border: '1px solid #e0e0e0',
+                backgroundColor: style === 'satellite' ? '#4285f4' : '#f8f9fa',
+                color: style === 'satellite' ? 'white' : '#666',
+                cursor: 'pointer',
+                fontSize: '14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                transition: 'all 0.2s'
+              }}
+              onMouseOver={(e) => {
+                if (style !== 'satellite') {
+                  e.currentTarget.style.backgroundColor = '#f0f0f0';
                 }
-              } else {
-                console.log('Activating elevation tool');
-                clearPinpointMarker();
-              }
-            }}
-            style={{
-              padding: '8px 12px',
-              borderRadius: '20px',
-              border: '1px solid #e0e0e0',
-              backgroundColor: elevationToolActive ? '#34a853' : '#f8f9fa',
-              color: elevationToolActive ? 'white' : '#666',
-              cursor: 'pointer',
-              fontSize: '14px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              transition: 'all 0.2s'
-            }}
-            onMouseOver={(e) => {
-              if (!elevationToolActive) {
-                e.currentTarget.style.backgroundColor = '#f0f0f0';
-              }
-            }}
-            onMouseOut={(e) => {
-              if (!elevationToolActive) {
-                e.currentTarget.style.backgroundColor = '#f8f9fa';
-              }
-            }}
-          >
-            <Ruler style={{ width: '16px', height: '16px' }} />
-            Elevation
-          </button>
-        </div>
+              }}
+              onMouseOut={(e) => {
+                if (style !== 'satellite') {
+                  e.currentTarget.style.backgroundColor = '#f8f9fa';
+                }
+              }}
+            >
+              <Satellite style={{ width: '16px', height: '16px' }} />
+              Satellite
+            </button>
+
+            {/* Elevation Tool Button */}
+            <button
+              onClick={() => {
+                console.log('Elevation tool button clicked, current state:', elevationToolActive);
+                setElevationToolActive(!elevationToolActive);
+                if (elevationToolActive) {
+                  console.log('Deactivating elevation tool');
+                  setIsDrawing(false);
+                  setElevationPoints([]);
+                  setShowElevationChart(false);
+                  setElevationData(null);
+                  
+                  const map = mapRef.current;
+                  if (map) {
+                    const lineId = 'elevation-line';
+                    if (map.getSource(lineId)) {
+                      map.removeLayer(lineId);
+                      map.removeSource(lineId);
+                    }
+                  }
+                } else {
+                  console.log('Activating elevation tool');
+                  clearPinpointMarker();
+                }
+              }}
+              style={{
+                padding: '8px 12px',
+                borderRadius: '20px',
+                border: '1px solid #e0e0e0',
+                backgroundColor: elevationToolActive ? '#34a853' : '#f8f9fa',
+                color: elevationToolActive ? 'white' : '#666',
+                cursor: 'pointer',
+                fontSize: '14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                transition: 'all 0.2s'
+              }}
+              onMouseOver={(e) => {
+                if (!elevationToolActive) {
+                  e.currentTarget.style.backgroundColor = '#f0f0f0';
+                }
+              }}
+              onMouseOut={(e) => {
+                if (!elevationToolActive) {
+                  e.currentTarget.style.backgroundColor = '#f8f9fa';
+                }
+              }}
+            >
+              <Ruler style={{ width: '16px', height: '16px' }} />
+              Elevation
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Sidebar Panel */}
-      {sidebarOpen && (
+      {/* Mobile Menu Dropdown */}
+      {isMobile && showMobileMenu && (
+        <div 
+          className="mobile-menu-container"
+          style={{
+            position: 'fixed',
+            top: '56px',
+            left: '12px',
+            backgroundColor: 'white',
+            borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            zIndex: 1002,
+            minWidth: '200px',
+            border: '1px solid #e0e0e0',
+            padding: '8px 0'
+          }}
+        >
+          {/* Theme Modes Section */}
+          <div style={{ padding: '0 16px 8px 16px', borderBottom: '1px solid #f0f0f0' }}>
+            <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px', fontWeight: '500' }}>
+              Map Mode
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <button
+                onClick={() => {
+                  setStyle('default');
+                  setShowMobileMenu(false);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: '6px',
+                  border: '1px solid #e0e0e0',
+                  backgroundColor: style === 'default' ? '#4285f4' : '#f8f9fa',
+                  color: style === 'default' ? 'white' : '#666',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  transition: 'all 0.2s',
+                  width: '100%',
+                  textAlign: 'left'
+                }}
+              >
+                <Map style={{ width: '16px', height: '16px' }} />
+                Default Map
+              </button>
+              <button
+                onClick={() => {
+                  setStyle('satellite');
+                  setShowMobileMenu(false);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: '6px',
+                  border: '1px solid #e0e0e0',
+                  backgroundColor: style === 'satellite' ? '#4285f4' : '#f8f9fa',
+                  color: style === 'satellite' ? 'white' : '#666',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  transition: 'all 0.2s',
+                  width: '100%',
+                  textAlign: 'left'
+                }}
+              >
+                <Satellite style={{ width: '16px', height: '16px' }} />
+                Satellite View
+              </button>
+            </div>
+          </div>
+
+          {/* Theme Toggle Section */}
+          <div style={{ padding: '8px 16px', borderBottom: '1px solid #f0f0f0' }}>
+            <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px', fontWeight: '500' }}>
+              Theme
+            </div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '6px 12px',
+              backgroundColor: '#f8f9fa',
+              borderRadius: '20px',
+              height: '32px',
+              border: '1px solid #e0e0e0'
+            }}>
+              <ThemeToggle 
+                isDark={style === 'dark'} 
+                onToggle={(isDark) => setStyle(isDark ? 'dark' : 'default')} 
+              />
+            </div>
+          </div>
+
+          {/* Elevation Tool Section */}
+          <div style={{ padding: '8px 16px' }}>
+            <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px', fontWeight: '500' }}>
+              Tools
+            </div>
+            <button
+              onClick={() => {
+                console.log('Elevation tool button clicked, current state:', elevationToolActive);
+                setElevationToolActive(!elevationToolActive);
+                if (elevationToolActive) {
+                  console.log('Deactivating elevation tool');
+                  setIsDrawing(false);
+                  setElevationPoints([]);
+                  setShowElevationChart(false);
+                  setElevationData(null);
+                  
+                  const map = mapRef.current;
+                  if (map) {
+                    const lineId = 'elevation-line';
+                    if (map.getSource(lineId)) {
+                      map.removeLayer(lineId);
+                      map.removeSource(lineId);
+                    }
+                  }
+                } else {
+                  console.log('Activating elevation tool');
+                  clearPinpointMarker();
+                }
+                setShowMobileMenu(false);
+              }}
+              style={{
+                padding: '8px 12px',
+                borderRadius: '6px',
+                border: '1px solid #e0e0e0',
+                backgroundColor: elevationToolActive ? '#34a853' : '#f8f9fa',
+                color: elevationToolActive ? 'white' : '#666',
+                cursor: 'pointer',
+                fontSize: '14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'all 0.2s',
+                width: '100%',
+                textAlign: 'left'
+              }}
+            >
+              <Ruler style={{ width: '16px', height: '16px' }} />
+              {elevationToolActive ? 'Deactivate' : 'Activate'} Elevation Tool
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Logo in Bottom Left Corner */}
+      {isMobile && (
+        <div style={{
+          position: 'fixed',
+          bottom: '20px',
+          left: '20px',
+          zIndex: 1000,
+          backgroundColor: 'white',
+          borderRadius: '8px',
+          padding: '8px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+        }}>
+          <img 
+            src="/looplet-dark.png" 
+            alt="Looplet" 
+            style={{
+              width: '80px', 
+              display: style === 'dark' ? 'none' : 'block'
+            }} 
+          />
+          <img 
+            src="/looplet.png" 
+            alt="Looplet" 
+            style={{
+              width: '70px', 
+              display: style === 'dark' ? 'block' : 'none'
+            }} 
+          />
+        </div>
+      )}
+
+      {/* Mobile Elevation Tool Controls */}
+      {isMobile && elevationToolActive && isDrawing && elevationPoints.length >= 2 && (
+        <div style={{
+          position: 'fixed',
+          bottom: '20px',
+          right: '20px',
+          zIndex: 1000,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px'
+        }}>
+          <button
+            disabled={isLoading}
+            onClick={async () => {
+              if (!canPerformAction('elevation')) {
+                setShowSubscriptionModal(true);
+                return;
+              }
+
+              setIsLoading(true);
+              try {
+                const data = await createElevationProfile(elevationPoints);
+                setElevationData(data);
+                setShowElevationChart(true);
+                incrementElevationProfile();
+              } catch (error) {
+                console.error('Error creating elevation profile:', error);
+                alert('Error creating elevation profile. Please try again.');
+              } finally {
+                setIsLoading(false);
+              }
+            }}
+            style={{
+              padding: '10px 16px',
+              borderRadius: '8px',
+              backgroundColor: '#4285f4',
+              color: 'white',
+              border: 'none',
+              cursor: isLoading ? 'not-allowed' : 'pointer',
+              fontSize: '14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              opacity: isLoading ? 0.6 : 1,
+              transition: 'background-color 0.2s',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+              minWidth: '140px',
+              justifyContent: 'center'
+            }}
+            onMouseOver={(e) => {
+              if (!isLoading) {
+                e.currentTarget.style.backgroundColor = '#3367d6';
+              }
+            }}
+            onMouseOut={(e) => {
+              if (!isLoading) {
+                e.currentTarget.style.backgroundColor = '#4285f4';
+              }
+            }}
+          >
+            <BarChart3 style={{ width: '16px', height: '16px' }} />
+            {isLoading ? 'Loading...' : 'Show Profile'}
+          </button>
+          
+          <button
+            onClick={() => {
+              setIsDrawing(false);
+              setElevationPoints([]);
+              setShowElevationChart(false);
+              setElevationData(null);
+              
+              const map = mapRef.current;
+              if (map) {
+                const lineId = 'elevation-line';
+                if (map.getSource(lineId)) {
+                  map.removeLayer(lineId);
+                  map.removeSource(lineId);
+                }
+              }
+            }}
+            style={{
+              padding: '10px 16px',
+              borderRadius: '8px',
+              backgroundColor: '#dc3545',
+              color: 'white',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'background-color 0.2s',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+              minWidth: '140px',
+              justifyContent: 'center'
+            }}
+            onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#c82333'}
+            onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#dc3545'}
+          >
+            <Trash2 style={{ width: '16px', height: '16px' }} />
+            Clear Line
+          </button>
+        </div>
+      )}
+
+      {/* Mobile Elevation Chart Toggle */}
+      {isMobile && elevationData && (
+        <div style={{
+          position: 'fixed',
+          bottom: '20px',
+          right: '20px',
+          zIndex: 1000
+        }}>
+          <button
+            onClick={() => setShowElevationChart(!showElevationChart)}
+            style={{
+              padding: '10px 16px',
+              borderRadius: '8px',
+              backgroundColor: '#6f42c1',
+              color: 'white',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'background-color 0.2s',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+              minWidth: '140px',
+              justifyContent: 'center'
+            }}
+            onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#5a32a3'}
+            onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#6f42c1'}
+          >
+            <BarChart3 style={{ width: '16px', height: '16px' }} />
+            {showElevationChart ? 'Hide Chart' : 'Show Chart'}
+          </button>
+        </div>
+      )}
+
+      {/* Sidebar Panel - Only show on desktop */}
+      {sidebarOpen && !isMobile && (
         <div style={{
           position: 'fixed',
           top: '64px',
           left: 0,
           width: '320px',
           height: 'calc(100vh - 64px)',
-            
+          
           zIndex: 999,
           overflowY: 'auto',
-
+          
         }}>
           <div style={{ padding: '16px' }}>
             {/* Selected Location */}

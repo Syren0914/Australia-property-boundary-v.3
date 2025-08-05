@@ -18,6 +18,7 @@ interface SearchResult {
   };
 }
 
+
 interface SearchProps {
   onLocationSelect: (result: SearchResult) => void;
   mapCenter: [number, number];
@@ -26,6 +27,8 @@ interface SearchProps {
 export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<SearchResult[]>([]);
+  const [isMobile, setIsMobile] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
@@ -54,6 +57,34 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
 
     return () => clearTimeout(timeoutId);
   }, [query]);
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth <= 768);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+  
+  // Close mobile menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (showMobileMenu && !target.closest('.mobile-menu-container')) {
+        setShowMobileMenu(false);
+      }
+    };
+  
+    if (showMobileMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+  
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showMobileMenu]);
 
   // Close suggestions when clicking outside
   useEffect(() => {
@@ -280,7 +311,7 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
   };
 
   return (
-    <div ref={searchRef} style={{ position: 'relative', width: '100%' }}>
+    <div ref={searchRef} style={{ position: 'relative', width: isMobile ? 'none' : '70%' }}>
       <div style={{ position: 'relative' }}>
         <input
           ref={inputRef}
@@ -356,8 +387,8 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
             }}
             style={{
               position: 'absolute',
-              right: '8px',
-              top: '50%',
+              right: '-40px',
+              top: '45%',
               transform: 'translateY(-50%)',
               color: '#6b7280',
               cursor: 'pointer',
@@ -390,7 +421,11 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
           {suggestions.map((suggestion, index) => (
             <div
               key={suggestion.id}
-              onClick={() => handleSelect(suggestion)}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleSelect(suggestion);
+              }}
               style={{
                 padding: '12px 16px',
                 cursor: 'pointer',
