@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { SearchIcon } from 'lucide-react';
 
 interface SearchResult {
@@ -18,7 +18,6 @@ interface SearchResult {
   };
 }
 
-
 interface SearchProps {
   onLocationSelect: (result: SearchResult) => void;
   mapCenter: [number, number];
@@ -28,65 +27,79 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<SearchResult[]>([]);
   const [isMobile, setIsMobile] = useState(false);
-  const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const searchRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Queensland, Australia bounds (approximate)
-  const qldBounds = {
+  const qldBounds = useMemo(() => ({
     west: 138.0,  // Western boundary
     east: 153.5,  // Eastern boundary  
     south: -29.2, // Southern boundary
     north: -9.0   // Northern boundary
-  };
+  }), []);
 
-  // Debounce search requests
+  // Debounce search requests with better mobile optimization
   useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      if (query.trim().length >= 2) {
+    // Clear existing timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    // Cancel existing request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    if (query.trim().length >= 2) {
+      // Longer debounce for mobile to reduce API calls
+      const debounceTime = isMobile ? 400 : 200;
+      searchTimeoutRef.current = setTimeout(() => {
         console.log('Performing search for:', query);
         performSearch(query);
-      } else {
-        setSuggestions([]);
-        setShowSuggestions(false);
-      }
-    }, 200); // Reduced debounce time for faster response
+      }, debounceTime);
+    } else {
+      setSuggestions([]);
+      setShowSuggestions(false);
+    }
 
-    return () => clearTimeout(timeoutId);
-  }, [query]);
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [query, isMobile]);
+
+  // Mobile detection with throttling
   useEffect(() => {
+    let resizeTimeout: NodeJS.Timeout;
+    
     const checkMobile = () => {
-      setIsMobile(window.innerWidth <= 768);
+      const newIsMobile = window.innerWidth <= 768;
+      if (newIsMobile !== isMobile) {
+        setIsMobile(newIsMobile);
+      }
+    };
+    
+    const throttledCheckMobile = () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(checkMobile, 100);
     };
     
     checkMobile();
-    window.addEventListener('resize', checkMobile);
+    window.addEventListener('resize', throttledCheckMobile);
     
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
-  
-  // Close mobile menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as HTMLElement;
-      if (showMobileMenu && !target.closest('.mobile-menu-container')) {
-        setShowMobileMenu(false);
-      }
-    };
-  
-    if (showMobileMenu) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-  
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('resize', throttledCheckMobile);
+      clearTimeout(resizeTimeout);
     };
-  }, [showMobileMenu]);
+  }, [isMobile]);
 
-  // Close suggestions when clicking outside
+  // Close suggestions when clicking outside - optimized for mobile
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
@@ -95,11 +108,20 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
+    // Use passive listener for better mobile performance
+    document.addEventListener('mousedown', handleClickOutside, { passive: true });
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const performSearch = async (searchQuery: string) => {
+  const performSearch = useCallback(async (searchQuery: string) => {
+    // Cancel previous request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // Create new abort controller
+    abortControllerRef.current = new AbortController();
+    
     setIsLoading(true);
     try {
       // Use Google Geocoding API for better address results
@@ -111,38 +133,38 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
       });
 
       const response = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?${params}`
+        `https://maps.googleapis.com/maps/api/geocode/json?${params}`,
+        { signal: abortControllerRef.current.signal }
       );
       
-             if (response.ok) {
-         const data = await response.json();
-         console.log('Google search response:', data);
-         const results: SearchResult[] = data.results?.map((result: any, index: number) => ({
-           id: `google_${index}_${Date.now()}`, // Unique ID to prevent duplicates
-           place_name: result.formatted_address,
-           center: [result.geometry.location.lng, result.geometry.location.lat],
-           bbox: result.geometry.viewport ? [
-             result.geometry.viewport.southwest.lng,
-             result.geometry.viewport.southwest.lat,
-             result.geometry.viewport.northeast.lng,
-             result.geometry.viewport.northeast.lat
-           ] : undefined,
-           properties: {
-             address: result.formatted_address,
-             city: result.address_components?.find((comp: any) => comp.types.includes('locality'))?.long_name,
-             state: result.address_components?.find((comp: any) => comp.types.includes('administrative_area_level_1'))?.long_name,
-             country: result.address_components?.find((comp: any) => comp.types.includes('country'))?.long_name,
-             housenumber: result.address_components?.find((comp: any) => comp.types.includes('street_number'))?.long_name,
-             street: result.address_components?.find((comp: any) => comp.types.includes('route'))?.long_name,
-             suburb: result.address_components?.find((comp: any) => comp.types.includes('sublocality'))?.long_name,
-             postcode: result.address_components?.find((comp: any) => comp.types.includes('postal_code'))?.long_name,
-           }
-         })) || [];
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Google search response:', data);
+        const results: SearchResult[] = data.results?.map((result: any, index: number) => ({
+          id: `google_${index}_${Date.now()}`,
+          place_name: result.formatted_address,
+          center: [result.geometry.location.lng, result.geometry.location.lat],
+          bbox: result.geometry.viewport ? [
+            result.geometry.viewport.southwest.lng,
+            result.geometry.viewport.southwest.lat,
+            result.geometry.viewport.northeast.lng,
+            result.geometry.viewport.northeast.lat
+          ] : undefined,
+          properties: {
+            address: result.formatted_address,
+            city: result.address_components?.find((comp: any) => comp.types.includes('locality'))?.long_name,
+            state: result.address_components?.find((comp: any) => comp.types.includes('administrative_area_level_1'))?.long_name,
+            country: result.address_components?.find((comp: any) => comp.types.includes('country'))?.long_name,
+            housenumber: result.address_components?.find((comp: any) => comp.types.includes('street_number'))?.long_name,
+            street: result.address_components?.find((comp: any) => comp.types.includes('route'))?.long_name,
+            suburb: result.address_components?.find((comp: any) => comp.types.includes('sublocality'))?.long_name,
+            postcode: result.address_components?.find((comp: any) => comp.types.includes('postal_code'))?.long_name,
+          }
+        })) || [];
         
         // More inclusive filtering for better address coverage
         const filteredResults = results.filter(result => {
           const properties = result.properties;
-
           
           // Include all results that might be relevant
           if (properties?.country === 'AU') {
@@ -166,43 +188,49 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
         setSelectedIndex(-1);
       }
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('Search request was aborted');
+        return;
+      }
+      
       console.error('Search error:', error);
       
-             // Fallback search with Google API (no restrictions)
-       try {
-         const fallbackParams = new URLSearchParams({
-           address: searchQuery,
-           key: 'AIzaSyDWqaq2LaVvqIJgNDEiD7_34MOOyel8d4s'
-         });
-         
-         const fallbackResponse = await fetch(
-           `https://maps.googleapis.com/maps/api/geocode/json?${fallbackParams}`
-         );
+      // Fallback search with Google API (no restrictions)
+      try {
+        const fallbackParams = new URLSearchParams({
+          address: searchQuery,
+          key: 'AIzaSyDWqaq2LaVvqIJgNDEiD7_34MOOyel8d4s'
+        });
         
-                 if (fallbackResponse.ok) {
-           const fallbackData = await fallbackResponse.json();
-           console.log('Google fallback response:', fallbackData);
-           const fallbackResults: SearchResult[] = fallbackData.results?.map((result: any, index: number) => ({
-             id: `google_fallback_${index}_${Date.now()}`,
-             place_name: result.formatted_address,
-             center: [result.geometry.location.lng, result.geometry.location.lat],
-             bbox: result.geometry.viewport ? [
-               result.geometry.viewport.southwest.lng,
-               result.geometry.viewport.southwest.lat,
-               result.geometry.viewport.northeast.lng,
-               result.geometry.viewport.northeast.lat
-             ] : undefined,
-             properties: {
-               address: result.formatted_address,
-               city: result.address_components?.find((comp: any) => comp.types.includes('locality'))?.long_name,
-               state: result.address_components?.find((comp: any) => comp.types.includes('administrative_area_level_1'))?.long_name,
-               country: result.address_components?.find((comp: any) => comp.types.includes('country'))?.long_name,
-               housenumber: result.address_components?.find((comp: any) => comp.types.includes('street_number'))?.long_name,
-               street: result.address_components?.find((comp: any) => comp.types.includes('route'))?.long_name,
-               suburb: result.address_components?.find((comp: any) => comp.types.includes('sublocality'))?.long_name,
-               postcode: result.address_components?.find((comp: any) => comp.types.includes('postal_code'))?.long_name,
-             }
-           })) || [];
+        const fallbackResponse = await fetch(
+          `https://maps.googleapis.com/maps/api/geocode/json?${fallbackParams}`,
+          { signal: abortControllerRef.current.signal }
+        );
+        
+        if (fallbackResponse.ok) {
+          const fallbackData = await fallbackResponse.json();
+          console.log('Google fallback response:', fallbackData);
+          const fallbackResults: SearchResult[] = fallbackData.results?.map((result: any, index: number) => ({
+            id: `google_fallback_${index}_${Date.now()}`,
+            place_name: result.formatted_address,
+            center: [result.geometry.location.lng, result.geometry.location.lat],
+            bbox: result.geometry.viewport ? [
+              result.geometry.viewport.southwest.lng,
+              result.geometry.viewport.southwest.lat,
+              result.geometry.viewport.northeast.lng,
+              result.geometry.viewport.northeast.lat
+            ] : undefined,
+            properties: {
+              address: result.formatted_address,
+              city: result.address_components?.find((comp: any) => comp.types.includes('locality'))?.long_name,
+              state: result.address_components?.find((comp: any) => comp.types.includes('administrative_area_level_1'))?.long_name,
+              country: result.address_components?.find((comp: any) => comp.types.includes('country'))?.long_name,
+              housenumber: result.address_components?.find((comp: any) => comp.types.includes('street_number'))?.long_name,
+              street: result.address_components?.find((comp: any) => comp.types.includes('route'))?.long_name,
+              suburb: result.address_components?.find((comp: any) => comp.types.includes('sublocality'))?.long_name,
+              postcode: result.address_components?.find((comp: any) => comp.types.includes('postal_code'))?.long_name,
+            }
+          })) || [];
           
           console.log('Fallback results:', fallbackResults);
           setSuggestions(fallbackResults);
@@ -211,23 +239,27 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
           setSuggestions([]);
           setShowSuggestions(false);
         }
-                      } catch (fallbackError) {
-           console.error('Google fallback search also failed:', fallbackError);
-           setSuggestions([]);
-           setShowSuggestions(false);
-         }
+      } catch (fallbackError) {
+        if (fallbackError instanceof Error && fallbackError.name === 'AbortError') {
+          console.log('Fallback search request was aborted');
+          return;
+        }
+        console.error('Google fallback search also failed:', fallbackError);
+        setSuggestions([]);
+        setShowSuggestions(false);
+      }
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [qldBounds]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setQuery(e.target.value);
     setShowSuggestions(false);
     setSelectedIndex(-1);
-  };
+  }, []);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSelectedIndex(prev => 
@@ -248,17 +280,17 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
       setSelectedIndex(-1);
       inputRef.current?.blur();
     }
-  };
+  }, [suggestions, selectedIndex]);
 
-  const handleSelect = (result: SearchResult) => {
+  const handleSelect = useCallback((result: SearchResult) => {
     onLocationSelect(result);
     setQuery(result.place_name);
     setShowSuggestions(false);
     setSelectedIndex(-1);
     inputRef.current?.blur();
-  };
+  }, [onLocationSelect]);
 
-  const handleInputFocus = () => {
+  const handleInputFocus = useCallback(() => {
     if (suggestions.length > 0) {
       setShowSuggestions(true);
     }
@@ -266,9 +298,9 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
     if (query.trim().length >= 2 && suggestions.length > 0) {
       setShowSuggestions(true);
     }
-  };
+  }, [suggestions.length, query]);
 
-  const getHighlightedText = (text: string, query: string) => {
+  const getHighlightedText = useCallback((text: string, query: string) => {
     if (!query.trim()) return text;
     
     const regex = new RegExp(`(${query})`, 'gi');
@@ -281,9 +313,9 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
         </span>
       ) : part
     );
-  };
+  }, []);
 
-  const formatAddress = (result: SearchResult) => {
+  const formatAddress = useCallback((result: SearchResult) => {
     const props = result.properties;
     const parts = [];
     
@@ -308,10 +340,72 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
     }
     
     return parts.join(', ');
-  };
+  }, []);
+
+  const handleClearClick = useCallback(() => {
+    setQuery('');
+    setSuggestions([]);
+    setShowSuggestions(false);
+    inputRef.current?.focus();
+  }, []);
+
+  const handleSuggestionClick = useCallback((suggestion: SearchResult) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    handleSelect(suggestion);
+  }, [handleSelect]);
+
+  // Memoize suggestion items to prevent unnecessary re-renders
+  const suggestionItems = useMemo(() => 
+    suggestions.map((suggestion, index) => (
+      <div
+        key={suggestion.id}
+        onClick={handleSuggestionClick(suggestion)}
+        style={{
+          padding: '12px 16px',
+          cursor: 'pointer',
+          transition: 'background-color 0.2s',
+          backgroundColor: index === selectedIndex ? '#eff6ff' : 'transparent',
+          borderLeft: index === selectedIndex ? '4px solid #3b82f6' : 'none',
+          borderRadius: index === 0 ? '8px 8px 0 0' : index === suggestions.length - 1 ? '0 0 8px 8px' : '0'
+        }}
+        onMouseOver={(e) => {
+          if (index !== selectedIndex) {
+            e.currentTarget.style.backgroundColor = '#f9fafb';
+          }
+        }}
+        onMouseOut={(e) => {
+          if (index !== selectedIndex) {
+            e.currentTarget.style.backgroundColor = 'transparent';
+          }
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+          {/* Location Icon */}
+          <div style={{ flexShrink: 0, marginTop: '2px' }}>
+            <svg width="16" height="16" fill="none" stroke="#6b7280" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </div>
+          
+          {/* Content */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: '14px', fontWeight: 500, color: '#111827' }}>
+              {getHighlightedText(suggestion.place_name, query)}
+            </div>
+            {suggestion.properties.housenumber && (
+              <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                {formatAddress(suggestion)}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )), [suggestions, selectedIndex, query, getHighlightedText, formatAddress, handleSuggestionClick]);
 
   return (
-    <div ref={searchRef} style={{ position: 'relative', width: isMobile ? 'none' : '70%' }}>
+    <div ref={searchRef} style={{ position: 'relative', width: isMobile ? '70%' : '70%' }}>
       <div style={{ position: 'relative' }}>
         <input
           ref={inputRef}
@@ -327,16 +421,18 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
           placeholder="Search for an address.."
           style={{
             width: '100%',
-            padding: '12px 16px',
-            paddingLeft: '40px',
-            fontSize: '16px',
+            padding: isMobile ? '10px 14px' : '12px 16px',
+            paddingLeft: isMobile ? '36px' : '40px',
+            fontSize: isMobile ? '14px' : '16px',
             backgroundColor: 'white',
             border: '1px solid #e0e0e0',
-            borderRadius: '24px',
+            borderRadius: isMobile ? '20px' : '24px',
             boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
             color: '#333', 
             outline: 'none',
-            transition: 'border-color 0.2s, box-shadow 0.2s'
+            transition: 'border-color 0.2s, box-shadow 0.2s',
+            WebkitAppearance: 'none',
+            WebkitTapHighlightColor: 'transparent'
           }}
           onBlur={(e) => {
             e.target.style.borderColor = '#e0e0e0';
@@ -347,8 +443,8 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
         {/* Search Icon */}
         <div style={{ 
           position: 'absolute', 
-          scale: '0.7',
-          left: '12px', 
+          scale: isMobile ? '0.6' : '0.7',
+          left: isMobile ? '10px' : '12px', 
           top: '45%', 
           transform: 'translateY(-50%)',
           pointerEvents: 'none',
@@ -361,13 +457,13 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
         {isLoading && (
           <div style={{ 
             position: 'absolute', 
-            right: '8px', 
+            right: isMobile ? '6px' : '8px', 
             top: '50%', 
             transform: 'translateY(-50%)'
           }}>
             <div style={{ 
-              width: '16px', 
-              height: '16px', 
+              width: isMobile ? '14px' : '16px', 
+              height: isMobile ? '14px' : '16px', 
               border: '2px solid #e0e0e0',
               borderTop: '2px solid #4285f4',
               borderRadius: '50%',
@@ -379,22 +475,19 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
         {/* Clear Button */}
         {query && !isLoading && (
           <button
-            onClick={() => {
-              setQuery('');
-              setSuggestions([]);
-              setShowSuggestions(false);
-              inputRef.current?.focus();
-            }}
+            onClick={handleClearClick}
             style={{
               position: 'absolute',
-              right: '-40px',
+              right: isMobile ? '-35px' : '-40px',
               top: '45%',
               transform: 'translateY(-50%)',
               color: '#6b7280',
               cursor: 'pointer',
               border: 'none',
               background: 'none',
-              padding: '4px'
+              padding: '4px',
+              fontSize: isMobile ? '14px' : '16px',
+              WebkitTapHighlightColor: 'transparent'
             }}
             onMouseOver={(e) => e.currentTarget.style.color = '#374151'}
             onMouseOut={(e) => e.currentTarget.style.color = '#6b7280'}
@@ -415,59 +508,11 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
           border: '1px solid #e5e7eb',
           borderRadius: '8px',
           boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
-          maxHeight: '320px',
-          overflowY: 'auto'
+          maxHeight: isMobile ? '200px' : '320px',
+          overflowY: 'auto',
+          WebkitOverflowScrolling: 'touch'
         }}>
-          {suggestions.map((suggestion, index) => (
-            <div
-              key={suggestion.id}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                handleSelect(suggestion);
-              }}
-              style={{
-                padding: '12px 16px',
-                cursor: 'pointer',
-                transition: 'background-color 0.2s',
-                backgroundColor: index === selectedIndex ? '#eff6ff' : 'transparent',
-                borderLeft: index === selectedIndex ? '4px solid #3b82f6' : 'none',
-                borderRadius: index === 0 ? '8px 8px 0 0' : index === suggestions.length - 1 ? '0 0 8px 8px' : '0'
-              }}
-              onMouseOver={(e) => {
-                if (index !== selectedIndex) {
-                  e.currentTarget.style.backgroundColor = '#f9fafb';
-                }
-              }}
-              onMouseOut={(e) => {
-                if (index !== selectedIndex) {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                }
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-                {/* Location Icon */}
-                <div style={{ flexShrink: 0, marginTop: '2px' }}>
-                  <svg width="16" height="16" fill="none" stroke="#6b7280" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                </div>
-                
-                {/* Content */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '14px', fontWeight: 500, color: '#111827' }}>
-                    {getHighlightedText(suggestion.place_name, query)}
-                  </div>
-                  {suggestion.properties.housenumber && (
-                    <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-                      {formatAddress(suggestion)}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
+          {suggestionItems}
         </div>
       )}
 
@@ -482,9 +527,9 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
           border: '1px solid #e5e7eb',
           borderRadius: '8px',
           boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
-          padding: '16px'
+          padding: isMobile ? '12px' : '16px'
         }}>
-          <div style={{ fontSize: '14px', color: '#6b7280', textAlign: 'center' }}>
+          <div style={{ fontSize: isMobile ? '12px' : '14px', color: '#6b7280', textAlign: 'center' }}>
             No addresses found for "{query}". Try a different search term or check spelling.
           </div>
         </div>
