@@ -308,7 +308,7 @@ function AppContent() {
              
              // Only add maxzoom for mobile
              if (isMobile) {
-               fillLayerConfig.maxzoom = 10;
+               fillLayerConfig.maxzoom = 18;
              }
              
              map.addLayer(fillLayerConfig);
@@ -330,7 +330,7 @@ function AppContent() {
                type: 'line',
                source: sourceId,
                'source-layer': 'property_boundaries',
-               minzoom: isMobile ? 8 : 7,
+               minzoom: isMobile ? 10 : 7,
                paint: {
                  'line-color': '#7000FF',
                  'line-width': isMobile ? 0.5 : 1, // Thinner lines on mobile
@@ -340,7 +340,7 @@ function AppContent() {
              
              // Only add maxzoom for mobile
              if (isMobile) {
-               outlineLayerConfig.maxzoom = 11;
+               outlineLayerConfig.maxzoom = 18;
              }
              
              map.addLayer(outlineLayerConfig);
