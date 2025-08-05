@@ -7,6 +7,23 @@ import { ModernSidebar } from './components/ui/sidebar';
 import { SubscriptionProvider, useSubscription } from './contexts/SubscriptionContext';
 import { SubscriptionModal } from './components/SubscriptionModal';
 
+// Mobile detection hook
+const useMobileDetection = () => {
+  const [isMobile, setIsMobile] = useState(false);
+  
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth <= 768);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+  
+  return isMobile;
+};
 
 // Google Elevation API function
 const getElevationData = async (lat: number, lng: number): Promise<number> => {
@@ -69,6 +86,7 @@ const createElevationProfile = async (points: [number, number][]): Promise<{ dis
 function AppContent() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const isMobile = useMobileDetection();
   
   // Refs to track current state values for event handlers
   const elevationToolActiveRef = useRef(false);
@@ -183,6 +201,12 @@ function AppContent() {
       pitch: currentPitch,
       bearing: currentBearing,
       hash: true,
+      // Mobile optimizations
+      maxZoom: isMobile ? 18 : 20,
+      minZoom: isMobile ? 8 : 6,
+      maxPitch: isMobile ? 30 : 60,
+      // Performance settings for mobile
+      fadeDuration: isMobile ? 0 : 300,
     });
     console.log('Map created successfully');
 
@@ -245,49 +269,95 @@ function AppContent() {
         }
       }
 
-      if (!map.getSource(sourceId)) {
-        try {
-          map.addSource(sourceId, {
-            type: 'vector',
-            url: `pmtiles://${pmtilesUrl}`,
-          });
-
-          map.addLayer({
-            id: 'parcel-fill',
-            type: 'fill',
-            source: sourceId,
-            'source-layer': 'property_boundaries',
-            paint: {
-              'fill-color': '#A259FF',
-              'fill-opacity': 0.2,
-            },
-          });
-
-          // Add hover effect for better UX
-          map.on('mouseenter', 'parcel-fill', () => {
-            map.getCanvas().style.cursor = 'pointer';
-          });
-
-          map.on('mouseleave', 'parcel-fill', () => {
-            map.getCanvas().style.cursor = '';
-          });
-
-          map.addLayer({
-            id: 'parcel-outline',
-            type: 'line',
-            source: sourceId,
-            'source-layer': 'property_boundaries',
-            paint: {
-              'line-color': '#7000FF',
-              'line-width': 1,
-            },
-          });
-
-          console.log('PMTiles loaded!');
-        } catch (error) {
-          console.error('Error loading PMTiles:', error);
+      // Only add property boundaries if zoom level is appropriate for mobile
+      const shouldShowPropertyBoundaries = () => {
+        const currentZoom = map.getZoom();
+        // On mobile, only show property boundaries at higher zoom levels to prevent crashes
+        if (isMobile) {
+          return currentZoom >= 12; // Only show at zoom 12+ on mobile
         }
+        return currentZoom >= 8; // Show at zoom 8+ on desktop
+      };
+
+      // Function to add property boundaries with mobile optimizations
+      const addPropertyBoundaries = () => {
+        if (!map.getSource(sourceId)) {
+          try {
+            map.addSource(sourceId, {
+              type: 'vector',
+              url: `pmtiles://${pmtilesUrl}`,
+            });
+
+            // Mobile-optimized fill layer
+            map.addLayer({
+              id: 'parcel-fill',
+              type: 'fill',
+              source: sourceId,
+              'source-layer': 'property_boundaries',
+              minzoom: isMobile ? 12 : 8,
+              maxzoom: isMobile ? 18 : 20,
+              paint: {
+                'fill-color': '#A259FF',
+                'fill-opacity': isMobile ? 0.1 : 0.2, // Lower opacity on mobile
+              },
+            });
+
+            // Add hover effect for better UX (only on desktop)
+            if (!isMobile) {
+              map.on('mouseenter', 'parcel-fill', () => {
+                map.getCanvas().style.cursor = 'pointer';
+              });
+
+              map.on('mouseleave', 'parcel-fill', () => {
+                map.getCanvas().style.cursor = '';
+              });
+            }
+
+            // Mobile-optimized outline layer
+            map.addLayer({
+              id: 'parcel-outline',
+              type: 'line',
+              source: sourceId,
+              'source-layer': 'property_boundaries',
+              minzoom: isMobile ? 12 : 8,
+              maxzoom: isMobile ? 18 : 20,
+              paint: {
+                'line-color': '#7000FF',
+                'line-width': isMobile ? 0.5 : 1, // Thinner lines on mobile
+                'line-opacity': isMobile ? 0.6 : 1, // Lower opacity on mobile
+              },
+            });
+
+            console.log('PMTiles loaded with mobile optimizations!');
+          } catch (error) {
+            console.error('Error loading PMTiles:', error);
+          }
+        }
+      };
+
+      // Add property boundaries if zoom level is appropriate
+      if (shouldShowPropertyBoundaries()) {
+        addPropertyBoundaries();
       }
+
+      // Listen for zoom changes to show/hide property boundaries on mobile
+      map.on('zoomend', () => {
+        const currentZoom = map.getZoom();
+        const hasSource = map.getSource(sourceId);
+        
+        if (shouldShowPropertyBoundaries() && !hasSource) {
+          addPropertyBoundaries();
+        } else if (!shouldShowPropertyBoundaries() && hasSource) {
+          // Remove property boundaries on mobile when zoomed out too far
+          try {
+            if (map.getLayer('parcel-fill')) map.removeLayer('parcel-fill');
+            if (map.getLayer('parcel-outline')) map.removeLayer('parcel-outline');
+            if (map.getSource(sourceId)) map.removeSource(sourceId);
+          } catch (error) {
+            console.log('Error removing property boundaries:', error);
+          }
+        }
+      });
 
       // Add pinpoint marker source and layer
       map.addSource('pinpoint-marker', {
@@ -298,42 +368,40 @@ function AppContent() {
         }
       });
 
-             map.addLayer({
-         id: 'pinpoint-marker',
-         type: 'circle',
-         source: 'pinpoint-marker',
-         paint: {
-           'circle-radius': 12,
-           'circle-color': '#dc2626',
-           'circle-stroke-color': '#ffffff',
-           'circle-stroke-width': 3
-         }
-       });
+      map.addLayer({
+        id: 'pinpoint-marker',
+        type: 'circle',
+        source: 'pinpoint-marker',
+        paint: {
+          'circle-radius': isMobile ? 8 : 12, // Smaller marker on mobile
+          'circle-color': '#dc2626',
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': isMobile ? 2 : 3
+        }
+      });
 
-             // Add marker label
-       map.addLayer({
-         id: 'pinpoint-marker-label',
-         type: 'symbol',
-         source: 'pinpoint-marker',
-         layout: {
-           'text-field': ['get', 'name'],
-           'text-font': ['Arial Unicode MS Bold', 'Arial Bold', 'Helvetica Bold'],
-           'text-size': 14,
-           'text-offset': [0, -2],
-           'text-anchor': 'bottom',
-           'text-allow-overlap': true,
-           'text-ignore-placement': true
-         },
-         paint: {
-           'text-color': '#dc2626',
-           'text-halo-color': '#ffffff',
-           'text-halo-width': 2
-         }
-       });
+      // Add marker label
+      map.addLayer({
+        id: 'pinpoint-marker-label',
+        type: 'symbol',
+        source: 'pinpoint-marker',
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': ['Arial Unicode MS Bold', 'Arial Bold', 'Helvetica Bold'],
+          'text-size': isMobile ? 12 : 14, // Smaller text on mobile
+          'text-offset': [0, -2],
+          'text-anchor': 'bottom',
+          'text-allow-overlap': true,
+          'text-ignore-placement': true
+        },
+        paint: {
+          'text-color': '#dc2626',
+          'text-halo-color': '#ffffff',
+          'text-halo-width': isMobile ? 1 : 2
+        }
+      });
     });
 
-
-    
     // Combined click handler for both elevation tool and property selection
     map.on('click', (e) => {
       console.log('Map clicked, elevationToolActive:', elevationToolActiveRef.current, 'isDrawing:', isDrawingRef.current);
@@ -375,7 +443,7 @@ function AppContent() {
             source: lineId,
             paint: {
               'line-color': '#ff0000',
-              'line-width': 3,
+              'line-width': isMobile ? 2 : 3, // Thinner line on mobile
               'line-dasharray': [2, 2]
             }
           });
@@ -467,14 +535,14 @@ function AppContent() {
           layout: {
             'text-field': ['get', 'label'],
             'text-font': ['Open Sans Bold'],
-            'text-size': 16,
+            'text-size': isMobile ? 12 : 16, // Smaller text on mobile
             'text-offset': [0, 0],
             'text-anchor': 'center',
           },
           paint: {
             'text-color': '#ffffff',
             'text-halo-color': '#000000',
-            'text-halo-width': 2,
+            'text-halo-width': isMobile ? 1 : 2,
           },
         });
       }
@@ -486,7 +554,7 @@ function AppContent() {
       }
       maplibregl.removeProtocol('pmtiles');
     };
-  }, [style]);
+  }, [style, isMobile]);
 
   // Handle search result selection
   const handleSearchSelect = (result: any) => {
