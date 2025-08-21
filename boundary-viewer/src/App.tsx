@@ -51,18 +51,35 @@ async function getElevationsMultiDev(pointsLngLat: [number, number][]) {
 
 // PROD: call Supabase Edge Function (POST). This function should forward to ImageServer and return the raw ArcGIS JSON.
 async function getElevationsMultiProd(pointsLngLat: [number, number][]) {
-  const url = "https://wxwbxupdisbofesaygqj.supabase.co/functions/v1/hyper-endpoint";
-  if (!url) throw new Error('Missing VITE_SUPABASE_FUNC_URL');
+  const url =
+    (import.meta.env.VITE_SUPABASE_FUNC_URL as string) ||
+    'https://wxwbxupdisbofesaygqj.functions.supabase.co/hyper-endpoint'; // keep or remove fallback
+
+  const body = {
+    geometry: { points: pointsLngLat, spatialReference: { wkid: 4326 } },
+    geometryType: 'esriGeometryMultipoint',
+    returnFirstValueOnly: true,
+    sampleCount: 1,
+    pixelSize: { x: 1, y: 1, spatialReference: { wkid: 3857 } },
+    mosaicRule: { mosaicMethod: 'NorthWest' },
+  };
+
   const resp = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ points: pointsLngLat }),
+    body: JSON.stringify(body),
   });
-  if (!resp.ok) throw new Error(`Proxy error ${resp.status}`);
-  const data = await resp.json();
-  if (!data?.samples) throw new Error('No samples from proxy (prod)');
+
+  const text = await resp.text(); // better diagnostics
+  if (!resp.ok) throw new Error(`PROD proxy HTTP ${resp.status}: ${text.slice(0,300)}`);
+
+  let data: any;
+  try { data = JSON.parse(text); } catch { throw new Error(`PROD proxy returned non-JSON: ${text.slice(0,300)}`); }
+
+  if (!data?.samples) throw new Error(`PROD proxy missing "samples": ${JSON.stringify(data).slice(0,300)}`);
   return data.samples.map((s: any) => Number(s.value));
 }
+
 
 // Single dispatcher used everywhere
 async function getElevationsMulti(pointsLngLat: [number, number][]) {
