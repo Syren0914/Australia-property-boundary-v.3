@@ -29,43 +29,70 @@ const useMobileDetection = () => {
 // Google Elevation API function
 // Batch elevations in one call using esriGeometryMultipoint
 // --- batching multipoint query (fast) ---
-async function getElevationsMulti(pointsLngLat: [number, number][]) {
-  const geometry = JSON.stringify({ points: pointsLngLat, spatialReference: { wkid: 4326 } });
+// DEV: call ArcGIS ImageServer via Vite proxy (GET). Works only in dev because proxy bypasses CORS.
+async function getElevationsMultiDev(pointsLngLat: [number, number][]) {
   const params = new URLSearchParams({
-    f: "json",
-    geometry,
-    geometryType: "esriGeometryMultipoint",
-    returnFirstValueOnly: "true",
-    sampleCount: "1",
-    // lock the resampling scale ~1 m to match official tool
+    f: 'json',
+    geometry: JSON.stringify({ points: pointsLngLat, spatialReference: { wkid: 4326 } }),
+    geometryType: 'esriGeometryMultipoint',
+    returnFirstValueOnly: 'true',
+    sampleCount: '1',
+    // lock ~1 m resampling like the official tool
     pixelSize: JSON.stringify({ x: 1, y: 1, spatialReference: { wkid: 3857 } }),
-    mosaicRule: JSON.stringify({ mosaicMethod: "NorthWest" }),
+    mosaicRule: JSON.stringify({ mosaicMethod: 'NorthWest' }),
   });
   const url = `/arcgis/rest/services/Elevation/DEM_TimeSeries_AllUsers/ImageServer/getSamples?${params}`;
   const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = await resp.json();
+  if (!data?.samples) throw new Error('No samples from ImageServer (dev)');
   return data.samples.map((s: any) => Number(s.value));
 }
 
+// PROD: call Supabase Edge Function (POST). This function should forward to ImageServer and return the raw ArcGIS JSON.
+async function getElevationsMultiProd(pointsLngLat: [number, number][]) {
+  const url = import.meta.env.VITE_SUPABASE_FUNC_URL as string;
+  if (!url) throw new Error('Missing VITE_SUPABASE_FUNC_URL');
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ points: pointsLngLat }),
+  });
+  if (!resp.ok) throw new Error(`Proxy error ${resp.status}`);
+  const data = await resp.json();
+  if (!data?.samples) throw new Error('No samples from proxy (prod)');
+  return data.samples.map((s: any) => Number(s.value));
+}
+
+// Single dispatcher used everywhere
+async function getElevationsMulti(pointsLngLat: [number, number][]) {
+  return import.meta.env.DEV
+    ? getElevationsMultiDev(pointsLngLat)
+    : getElevationsMultiProd(pointsLngLat);
+}
+
+// Create elevation profile along a line, sampling every N meters (default 2 m), batching to keep requests small/fast.
 export async function createElevationProfile(
   lineLngLat: [number, number][],
-  stepMeters = 2,              // 2–5 m typically matches the official tool closely
-  chunkSize = 400
+  stepMeters = 2,
+  chunkSize = 400,
 ) {
+  if (lineLngLat.length < 2) throw new Error('Need at least 2 points for elevation profile');
+
   const line = turf.lineString(lineLngLat);
-  const totalKm = turf.length(line, { units: "kilometers" });
+  const totalKm = turf.length(line, { units: 'kilometers' });
   const totalM = totalKm * 1000;
 
-  const distances: number[] = [];
   const coords: [number, number][] = [];
+  const distances: number[] = [];
 
   for (let d = 0; d <= totalM; d += stepMeters) {
-    const pt = turf.along(line, d / 1000, { units: "kilometers" }) as any;
+    const pt = turf.along(line, d / 1000, { units: 'kilometers' }) as any;
     coords.push(pt.geometry.coordinates as [number, number]);
     distances.push(d);
   }
 
-  // batch calls so URLs don’t explode
+  // Batch requests; optionally run a few in parallel if needed (kept simple here)
   const elevations: number[] = [];
   for (let i = 0; i < coords.length; i += chunkSize) {
     const chunk = coords.slice(i, i + chunkSize);
@@ -73,8 +100,8 @@ export async function createElevationProfile(
     elevations.push(...vals);
   }
 
-  // optional light smoothing like the official tool
-  const smoothed = movingAverage(elevations, 5); // window=5; tweak 3–9
+  // Optional light smoothing to match official look
+  const smoothed = movingAverage(elevations, 5);
 
   return { distances, elevations: smoothed };
 }
