@@ -51,7 +51,7 @@ async function getElevationsMultiDev(pointsLngLat: [number, number][]) {
 
 // PROD: call Supabase Edge Function (POST). This function should forward to ImageServer and return the raw ArcGIS JSON.
 async function getElevationsMultiProd(pointsLngLat: [number, number][]) {
-  const url = import.meta.env.VITE_SUPABASE_FUNC_URL as string;
+  const url = "https://wxwbxupdisbofesaygqj.supabase.co/functions/v1/hyper-endpoint";
   if (!url) throw new Error('Missing VITE_SUPABASE_FUNC_URL');
   const resp = await fetch(url, {
     method: 'POST',
