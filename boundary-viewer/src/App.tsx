@@ -26,62 +26,74 @@ const useMobileDetection = () => {
 };
 
 // Google Elevation API function
-const getElevationData = async (lat: number, lng: number): Promise<number> => {
-  try {
-    // Use a CORS proxy to avoid CORS issues
-    const url = `https://corsproxy.io/?${encodeURIComponent(
-      `https://maps.googleapis.com/maps/api/elevation/json?locations=${lat},${lng}&key=AIzaSyDWqaq2LaVvqIJgNDEiD7_34MOOyel8d4s`
-    )}`;
-    
-    const response = await fetch(url);
-    const data = await response.json();
-    
-    if (data.results && data.results.length > 0) {
-      return data.results[0].elevation;
-    }
-    
-    throw new Error('No elevation data received');
-  } catch (error) {
-    console.error('Error fetching elevation data:', error);
-    // Return a fallback elevation based on coordinates
-    return Math.abs(lat * 1000 + lng * 1000) % 100 + 50;
-  }
-};
+// Batch elevations in one call using esriGeometryMultipoint
+// --- batching multipoint query (fast) ---
+async function getElevationsMulti(pointsLngLat: [number, number][]) {
+  const geometry = JSON.stringify({ points: pointsLngLat, spatialReference: { wkid: 4326 } });
+  const params = new URLSearchParams({
+    f: "json",
+    geometry,
+    geometryType: "esriGeometryMultipoint",
+    returnFirstValueOnly: "true",
+    sampleCount: "1",
+    // lock the resampling scale ~1 m to match official tool
+    pixelSize: JSON.stringify({ x: 1, y: 1, spatialReference: { wkid: 3857 } }),
+    mosaicRule: JSON.stringify({ mosaicMethod: "NorthWest" }),
+  });
+  const url = `/arcgis/rest/services/Elevation/DEM_TimeSeries_AllUsers/ImageServer/getSamples?${params}`;
+  const resp = await fetch(url);
+  const data = await resp.json();
+  return data.samples.map((s: any) => Number(s.value));
+}
 
-// Create elevation profile along a line
-const createElevationProfile = async (points: [number, number][]): Promise<{ distances: number[]; elevations: number[] }> => {
+export async function createElevationProfile(
+  lineLngLat: [number, number][],
+  stepMeters = 2,              // 2–5 m typically matches the official tool closely
+  chunkSize = 400
+) {
+  const line = turf.lineString(lineLngLat);
+  const totalKm = turf.length(line, { units: "kilometers" });
+  const totalM = totalKm * 1000;
+
   const distances: number[] = [];
+  const coords: [number, number][] = [];
+
+  for (let d = 0; d <= totalM; d += stepMeters) {
+    const pt = turf.along(line, d / 1000, { units: "kilometers" }) as any;
+    coords.push(pt.geometry.coordinates as [number, number]);
+    distances.push(d);
+  }
+
+  // batch calls so URLs don’t explode
   const elevations: number[] = [];
-  
-  if (points.length < 2) {
-    throw new Error('Need at least 2 points for elevation profile');
+  for (let i = 0; i < coords.length; i += chunkSize) {
+    const chunk = coords.slice(i, i + chunkSize);
+    const vals = await getElevationsMulti(chunk);
+    elevations.push(...vals);
   }
-  
-  // Create a line and sample points along it
-  const line = turf.lineString(points);
-  const totalDistance = turf.length(line, { units: 'meters' });
-  
-  // Sample elevation every 10 meters along the line
-  const sampleInterval = 10; // meters
-  const numSamples = Math.ceil(totalDistance / sampleInterval);
-  
-  for (let i = 0; i <= numSamples; i++) {
-    const distance = (i * sampleInterval);
-    if (distance > totalDistance) break;
-    
-    // Get point at this distance along the line
-    const pointAlongLine = turf.along(line, distance, { units: 'meters' });
-    const coord = pointAlongLine.geometry.coordinates as [number, number];
-    
-    // Get elevation for this point
-    const elevation = await getElevationData(coord[1], coord[0]);
-    
-    distances.push(distance);
-    elevations.push(elevation);
+
+  // optional light smoothing like the official tool
+  const smoothed = movingAverage(elevations, 5); // window=5; tweak 3–9
+
+  return { distances, elevations: smoothed };
+}
+
+function movingAverage(arr: number[], w: number) {
+  if (w <= 1) return arr;
+  const out: number[] = [];
+  const half = Math.floor(w / 2);
+  for (let i = 0; i < arr.length; i++) {
+    let s = 0, c = 0;
+    for (let j = i - half; j <= i + half; j++) {
+      if (j >= 0 && j < arr.length) { s += arr[j]; c++; }
+    }
+    out.push(s / c);
   }
-  
-  return { distances, elevations };
-};
+  return out;
+}
+
+
+
 
 function AppContent() {
   const mapContainer = useRef<HTMLDivElement>(null);
