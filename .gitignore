@@ -8,3 +8,4 @@ boundary-viewer/public/property_boundaries.geojson
 public/property_boundaries.geojson
 public/property_boundaries.pmtiles
 tippecanoe/
+.env
