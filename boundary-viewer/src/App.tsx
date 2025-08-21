@@ -139,19 +139,7 @@ function AppContent() {
   const [elevationData, setElevationData] = useState<{ distances: number[]; elevations: number[] } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const runProfile = async () => {
-    if (elevationPoints.length < 2) return;
-    setIsLoading(true);
-    try {
-      const res = await createElevationProfile(elevationPoints, 5); // 5 m spacing
-      setElevationData(res);
-      setShowElevationChart(true);
-    } catch (e) {
-      console.error("elevation profile error", e);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  
   
   // Pinpoint marker state
   const [selectedLocation, setSelectedLocation] = useState<{ center: [number, number]; place_name: string } | null>(null);
