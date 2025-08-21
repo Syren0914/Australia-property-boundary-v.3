@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
-import { Analytics } from "@vercel/analytics/next"
+
 
 interface UsageData {
   searches: number;
@@ -163,7 +163,7 @@ export const SubscriptionProvider: React.FC<SubscriptionProviderProps> = ({ chil
   return (
     <SubscriptionContext.Provider value={value}>
       {children}
-      <Analytics/>
+      
     </SubscriptionContext.Provider>
   );
 };
