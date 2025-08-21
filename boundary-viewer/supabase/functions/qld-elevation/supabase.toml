@@ -1,0 +1,3 @@
+[functions.qld-elevation]
+# verify_jwt defaults to true; keep it true or set explicitly:
+verify_jwt = true
