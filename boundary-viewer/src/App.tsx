@@ -26,90 +26,68 @@ const useMobileDetection = () => {
   return isMobile;
 };
 
-// Google Elevation API function
-// Batch elevations in one call using esriGeometryMultipoint
-// --- batching multipoint query (fast) ---
-// DEV: call ArcGIS ImageServer via Vite proxy (GET). Works only in dev because proxy bypasses CORS.
+// DEV: hits Vite proxy → ArcGIS directly
 async function getElevationsMultiDev(pointsLngLat: [number, number][]) {
   const params = new URLSearchParams({
-    f: 'json',
+    f: "json",
     geometry: JSON.stringify({ points: pointsLngLat, spatialReference: { wkid: 4326 } }),
-    geometryType: 'esriGeometryMultipoint',
-    returnFirstValueOnly: 'true',
-    sampleCount: '1',
-    // lock ~1 m resampling like the official tool
+    geometryType: "esriGeometryMultipoint",
+    returnFirstValueOnly: "true",
+    sampleCount: "1",
     pixelSize: JSON.stringify({ x: 1, y: 1, spatialReference: { wkid: 3857 } }),
-    mosaicRule: JSON.stringify({ mosaicMethod: 'NorthWest' }),
+    mosaicRule: JSON.stringify({ mosaicMethod: "NorthWest" }),
   });
   const url = `/arcgis/rest/services/Elevation/DEM_TimeSeries_AllUsers/ImageServer/getSamples?${params}`;
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = await resp.json();
-  if (!data?.samples) throw new Error('No samples from ImageServer (dev)');
+  if (!data?.samples) throw new Error("No samples (dev)");
   return data.samples.map((s: any) => Number(s.value));
 }
 
-// PROD: call Supabase Edge Function (POST). This function should forward to ImageServer and return the raw ArcGIS JSON.
+// PROD: hits your Supabase edge function (POST)
 async function getElevationsMultiProd(pointsLngLat: [number, number][]) {
-  const url =
-    (import.meta.env.VITE_SUPABASE_FUNC_URL as string) ||
-    'https://wxwbxupdisbofesaygqj.functions.supabase.co/hyper-endpoint'; // keep or remove fallback
-
-  const body = {
-    geometry: { points: pointsLngLat, spatialReference: { wkid: 4326 } },
-    geometryType: 'esriGeometryMultipoint',
-    returnFirstValueOnly: true,
-    sampleCount: 1,
-    pixelSize: { x: 1, y: 1, spatialReference: { wkid: 3857 } },
-    mosaicRule: { mosaicMethod: 'NorthWest' },
-  };
-
+  const url = import.meta.env.VITE_SUPABASE_FUNC_URL as string;
+  if (!url) throw new Error("Missing VITE_SUPABASE_FUNC_URL env");
   const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ points: pointsLngLat }),
   });
-
-  const text = await resp.text(); // better diagnostics
-  if (!resp.ok) throw new Error(`PROD proxy HTTP ${resp.status}: ${text.slice(0,300)}`);
-
-  let data: any;
-  try { data = JSON.parse(text); } catch { throw new Error(`PROD proxy returned non-JSON: ${text.slice(0,300)}`); }
-
-  if (!data?.samples) throw new Error(`PROD proxy missing "samples": ${JSON.stringify(data).slice(0,300)}`);
+  if (!resp.ok) throw new Error(`Proxy error ${resp.status}`);
+  const data = await resp.json();
+  if (!data?.samples) throw new Error("No samples (prod)");
   return data.samples.map((s: any) => Number(s.value));
 }
 
-
-// Single dispatcher used everywhere
+// Dispatcher
 async function getElevationsMulti(pointsLngLat: [number, number][]) {
-  return import.meta.env.DEV
-    ? getElevationsMultiDev(pointsLngLat)
-    : getElevationsMultiProd(pointsLngLat);
+  return import.meta.env.DEV ? getElevationsMultiDev(pointsLngLat)
+                             : getElevationsMultiProd(pointsLngLat);
 }
 
-// Create elevation profile along a line, sampling every N meters (default 2 m), batching to keep requests small/fast.
+// Public API: build a profile every N meters (default 5 m), batched
 export async function createElevationProfile(
   lineLngLat: [number, number][],
-  stepMeters = 2,
-  chunkSize = 400,
-) {
-  if (lineLngLat.length < 2) throw new Error('Need at least 2 points for elevation profile');
+  stepMeters = 5,
+  chunkSize = 400
+): Promise<{ distances: number[]; elevations: number[] }> {
+  if (lineLngLat.length < 2) throw new Error("Need at least 2 points");
 
   const line = turf.lineString(lineLngLat);
-  const totalKm = turf.length(line, { units: 'kilometers' });
+  const totalKm = turf.length(line, { units: "kilometers" });
   const totalM = totalKm * 1000;
 
   const coords: [number, number][] = [];
   const distances: number[] = [];
 
   for (let d = 0; d <= totalM; d += stepMeters) {
-    const pt = turf.along(line, d / 1000, { units: 'kilometers' }) as any;
-    coords.push(pt.geometry.coordinates as [number, number]);
+    const pt = turf.along(line, d / 1000, { units: "kilometers" }) as any;
+    const [lng, lat] = pt.geometry.coordinates as [number, number];
+    coords.push([lng, lat]);
     distances.push(d);
   }
 
-  // Batch requests; optionally run a few in parallel if needed (kept simple here)
   const elevations: number[] = [];
   for (let i = 0; i < coords.length; i += chunkSize) {
     const chunk = coords.slice(i, i + chunkSize);
@@ -117,10 +95,7 @@ export async function createElevationProfile(
     elevations.push(...vals);
   }
 
-  // Optional light smoothing to match official look
-  const smoothed = movingAverage(elevations, 5);
-
-  return { distances, elevations: smoothed };
+  return { distances, elevations: movingAverage(elevations, 5) }; // light smoothing
 }
 
 function movingAverage(arr: number[], w: number) {
@@ -163,6 +138,20 @@ function AppContent() {
   const [showElevationChart, setShowElevationChart] = useState(false);
   const [elevationData, setElevationData] = useState<{ distances: number[]; elevations: number[] } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  const runProfile = async () => {
+    if (elevationPoints.length < 2) return;
+    setIsLoading(true);
+    try {
+      const res = await createElevationProfile(elevationPoints, 5); // 5 m spacing
+      setElevationData(res);
+      setShowElevationChart(true);
+    } catch (e) {
+      console.error("elevation profile error", e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
   
   // Pinpoint marker state
   const [selectedLocation, setSelectedLocation] = useState<{ center: [number, number]; place_name: string } | null>(null);
@@ -796,6 +785,7 @@ function AppContent() {
         canPerformAction={canPerformAction}
         setShowSubscriptionModal={setShowSubscriptionModal}
         incrementElevationProfile={incrementElevationProfile}
+        
       />
       
       <ElevationChart

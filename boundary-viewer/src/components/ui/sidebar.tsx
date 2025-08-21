@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Search } from '../../Search';
 import { ThemeToggle } from './theme-toggle';
 import { MapPin, Trash2, Ruler, Satellite, BarChart3, Menu, X, Map } from 'lucide-react';
@@ -26,10 +26,15 @@ interface ModernSidebarProps {
   mapRef: React.MutableRefObject<any>;
   handleSearchSelect: (result: any) => void;
   clearPinpointMarker: () => void;
-  createElevationProfile: (points: [number, number][]) => Promise<{ distances: number[]; elevations: number[] }>;
+  createElevationProfile: (
+    points: [number, number][],
+    stepMeters?: number,
+    chunkSize?: number
+  ) => Promise<{ distances: number[]; elevations: number[] }>;
   canPerformAction: (action: "search" | "elevation" | "api") => boolean;
   setShowSubscriptionModal: (show: boolean) => void;
   incrementElevationProfile: () => void;
+  
 }
 
 export const ModernSidebar: React.FC<ModernSidebarProps> = ({
@@ -60,6 +65,8 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
 }) => {
   const [isMobile, setIsMobile] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const currentProfileAbort = useRef<AbortController | null>(null);
+
 
   // Check if device is mobile
   useEffect(() => {
@@ -688,24 +695,37 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
                 {isDrawing && elevationPoints.length >= 2 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <button
-                      disabled={isLoading}
+                      disabled={isLoading || elevationPoints.length < 2}
                       onClick={async () => {
                         if (!canPerformAction('elevation')) {
                           setShowSubscriptionModal(true);
                           return;
                         }
+                        if (elevationPoints.length < 2) {
+                          alert('Add at least two points before generating a profile.');
+                          return;
+                        }
+
+                        // cancel any in-flight request
+                        currentProfileAbort.current?.abort();
+                        const controller = new AbortController();
+                        currentProfileAbort.current = controller;
 
                         setIsLoading(true);
                         try {
-                          const data = await createElevationProfile(elevationPoints);
+                          // use 5 m spacing (and optional chunk size override, e.g. 600)
+                          const data = await createElevationProfile(elevationPoints, 5, 400);
+                          if (controller.signal.aborted) return; // ignore if superseded
+
                           setElevationData(data);
                           setShowElevationChart(true);
                           incrementElevationProfile();
-                        } catch (error) {
+                        } catch (error: any) {
+                          if (error?.name === 'AbortError') return; // silently ignore cancelled runs
                           console.error('Error creating elevation profile:', error);
-                          alert('Error creating elevation profile. Please try again.');
+                          alert(`Error creating elevation profile: ${error?.message ?? 'Please try again.'}`);
                         } finally {
-                          setIsLoading(false);
+                          if (!controller.signal.aborted) setIsLoading(false);
                         }
                       }}
                       style={{
@@ -725,17 +745,13 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
                         transition: 'background-color 0.2s'
                       }}
                       onMouseOver={(e) => {
-                        if (!isLoading) {
-                          e.currentTarget.style.backgroundColor = '#3367d6';
-                        }
+                        if (!isLoading) e.currentTarget.style.backgroundColor = '#3367d6';
                       }}
                       onMouseOut={(e) => {
-                        if (!isLoading) {
-                          e.currentTarget.style.backgroundColor = '#4285f4';
-                        }
+                        if (!isLoading) e.currentTarget.style.backgroundColor = '#4285f4';
                       }}
                     >
-                      <BarChart3 style={{ width: '16px', height: '16px' }} />
+                      <BarChart3 style={{ width: 16, height: 16 }} />
                       {isLoading ? 'Loading...' : 'Show Elevation Profile'}
                     </button>
                     
