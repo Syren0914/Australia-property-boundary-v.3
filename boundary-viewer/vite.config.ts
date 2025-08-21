@@ -10,7 +10,7 @@ export default defineConfig({
       '/arcgis':{
         target:'https://spatial-img.information.qld.gov.au',
         changeOrigin:true,
-        secure:true,
+        rewrite: p => p.replace(/^\/arcgis/, ''),
       }
     }
   },
