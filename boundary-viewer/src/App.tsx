@@ -49,21 +49,26 @@ async function getElevationsMultiDev(pointsLngLat: [number, number][]) {
 async function getElevationsMultiProd(pointsLngLat: [number, number][]) {
   const url = import.meta.env.VITE_SUPABASE_FUNC_URL as string;
   if (!url) throw new Error("Missing VITE_SUPABASE_FUNC_URL env");
+
   const resp = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+    },
     body: JSON.stringify({ points: pointsLngLat }),
   });
+
   if (!resp.ok) throw new Error(`Proxy error ${resp.status}`);
   const data = await resp.json();
   if (!data?.samples) throw new Error("No samples (prod)");
   return data.samples.map((s: any) => Number(s.value));
 }
-
 // Dispatcher
-async function getElevationsMulti(pointsLngLat: [number, number][]) {
-  return import.meta.env.DEV ? getElevationsMultiDev(pointsLngLat)
-                             : getElevationsMultiProd(pointsLngLat);
+async function getElevationsMulti(points: [number, number][]) {
+  return import.meta.env.DEV
+    ? getElevationsMultiDev(points)   // Vite proxy → ArcGIS (local dev)
+    : getElevationsMultiProd(points); // Supabase function (prod)
 }
 
 // Public API: build a profile every N meters (default 5 m), batched
