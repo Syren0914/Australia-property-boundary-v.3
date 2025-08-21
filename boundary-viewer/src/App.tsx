@@ -6,6 +6,7 @@ import { ElevationChart } from './ElevationChart';
 import { ModernSidebar } from './components/ui/sidebar';
 import { SubscriptionProvider, useSubscription } from './contexts/SubscriptionContext';
 import { SubscriptionModal } from './components/SubscriptionModal';
+import { Analytics } from '@vercel/analytics/react';
 
 // Mobile detection hook
 const useMobileDetection = () => {
@@ -780,6 +781,7 @@ function App() {
   return (
     <SubscriptionProvider>
       <AppContent />
+      <Analytics />
     </SubscriptionProvider>
   );
 }
