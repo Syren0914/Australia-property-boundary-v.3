@@ -23,7 +23,7 @@ interface SearchProps {
   mapCenter: [number, number];
 }
 
-export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
+export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) => {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<SearchResult[]>([]);
   const [isMobile, setIsMobile] = useState(false);
@@ -109,8 +109,8 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
     };
 
     // Use passive listener for better mobile performance
-    document.addEventListener('mousedown', handleClickOutside, { passive: true });
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', handleClickOutside, { passive: true } as any);
+    return () => document.removeEventListener('mousedown', handleClickOutside as any);
   }, []);
 
   const performSearch = useCallback(async (searchQuery: string) => {
@@ -124,12 +124,21 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
     
     setIsLoading(true);
     try {
-      // Use Google Geocoding API for better address results
+      // Read Google Maps API key from Vite env
+      const googleKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_KEY as string | undefined;
+      if (!googleKey) {
+        console.error('Missing VITE_GOOGLE_MAPS_KEY. Define it in a .env file at project root (prefixed with VITE_).');
+        setSuggestions([]);
+        setShowSuggestions(false);
+        return;
+      }
+
+      // Use Google Geocoding API for address results
       const params = new URLSearchParams({
         address: searchQuery,
         region: 'au',
         components: 'country:AU|administrative_area:QLD',
-        key: 'AIzaSyDWqaq2LaVvqIJgNDEiD7_34MOOyel8d4s'
+        key: googleKey
       });
 
       const response = await fetch(
@@ -195,11 +204,18 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
       
       console.error('Search error:', error);
       
-      // Fallback search with Google API (no restrictions)
+      // Fallback search with Google API (no region/components restrictions)
       try {
+        const googleKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_KEY as string | undefined;
+        if (!googleKey) {
+          setSuggestions([]);
+          setShowSuggestions(false);
+          return;
+        }
+
         const fallbackParams = new URLSearchParams({
           address: searchQuery,
-          key: 'AIzaSyDWqaq2LaVvqIJgNDEiD7_34MOOyel8d4s'
+          key: googleKey
         });
         
         const fallbackResponse = await fetch(
@@ -317,7 +333,7 @@ export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
 
   const formatAddress = useCallback((result: SearchResult) => {
     const props = result.properties;
-    const parts = [];
+    const parts = [] as string[];
     
     if (props.housenumber && props.street) {
       parts.push(`${props.housenumber} ${props.street}`);
