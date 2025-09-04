@@ -20,10 +20,9 @@ interface SearchResult {
 
 interface SearchProps {
   onLocationSelect: (result: SearchResult) => void;
-  mapCenter: [number, number];
 }
 
-export const Search: React.FC<SearchProps> = ({ onLocationSelect, mapCenter }) => {
+export const Search: React.FC<SearchProps> = ({ onLocationSelect }) => {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<SearchResult[]>([]);
   const [isMobile, setIsMobile] = useState(false);

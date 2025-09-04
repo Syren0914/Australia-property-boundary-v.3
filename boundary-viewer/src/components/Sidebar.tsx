@@ -22,7 +22,6 @@ interface SidebarProps {
   setIsLoading: (loading: boolean) => void;
   selectedLocation: { center: [number, number]; place_name: string } | null;
   setSelectedLocation: (location: { center: [number, number]; place_name: string } | null) => void;
-  mapCenter: [number, number];
   mapRef: React.MutableRefObject<any>;
   handleSearchSelect: (result: any) => void;
   clearPinpointMarker: () => void;
@@ -51,7 +50,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setIsLoading,
   selectedLocation,
 
-  mapCenter,
   mapRef,
   handleSearchSelect,
   clearPinpointMarker,
@@ -105,7 +103,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {/* Search */}
           <div style={{ marginBottom: '24px' }}>
             <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '8px' }}>Search</h2>
-            <Search onLocationSelect={handleSearchSelect} mapCenter={mapCenter} />
+            <Search onLocationSelect={handleSearchSelect} />
             
             {/* Selected Location Display */}
             {selectedLocation && (

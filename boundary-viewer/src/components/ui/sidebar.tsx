@@ -22,7 +22,6 @@ interface ModernSidebarProps {
   setIsLoading: (loading: boolean) => void;
   selectedLocation: { center: [number, number]; place_name: string } | null;
   setSelectedLocation: (location: { center: [number, number]; place_name: string } | null) => void;
-  mapCenter: [number, number];
   mapRef: React.MutableRefObject<any>;
   handleSearchSelect: (result: any) => void;
   clearPinpointMarker: () => void;
@@ -54,7 +53,6 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
   isLoading,
   setIsLoading,
   selectedLocation,
-  mapCenter,
   mapRef,
   handleSearchSelect,
   clearPinpointMarker,
@@ -181,7 +179,7 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
           position: 'relative',
           marginRight: isMobile ? '0' : '0px',
         }}>
-          <Search onLocationSelect={handleSearchSelect} mapCenter={mapCenter} />
+          <Search onLocationSelect={handleSearchSelect} />
         </div>
 
         {/* Tools Section - Only show on desktop */}
