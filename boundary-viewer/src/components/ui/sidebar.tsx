@@ -22,6 +22,7 @@ interface ModernSidebarProps {
   setIsLoading: (loading: boolean) => void;
   selectedLocation: { center: [number, number]; place_name: string } | null;
   setSelectedLocation: (location: { center: [number, number]; place_name: string } | null) => void;
+  mapCenter: [number, number];
   mapRef: React.MutableRefObject<any>;
   handleSearchSelect: (result: any) => void;
   clearPinpointMarker: () => void;
