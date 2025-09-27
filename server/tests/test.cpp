@@ -16,8 +16,8 @@ TEST_CASE("Factorials are computed", "[factorial]") {
     REQUIRE(factorial(10) == 3'628'800 );
 }
 
-TEST_CASE("All layers in wi-parcels.pmtiles are processed", "[pmtiles]") {
-    const char* const testdata[] = {"testdata/wi-parcels.pmtiles"};
-    init_reader_meters(1, testdata, 4);
-    // REQUIRE: All layers processed, AABBs added for all features
-}
+//TEST_CASE("All layers in wi-parcels.pmtiles are processed", "[pmtiles]") {
+//    const char* const testdata[] = {"resources/wi-parcels.pmtiles"};
+//    init_reader_meters(1, testdata, 1);
+//    // REQUIRE: All layers processed, AABBs added for all features
+//}

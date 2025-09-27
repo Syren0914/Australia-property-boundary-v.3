@@ -23,11 +23,11 @@ endif()
 find_package(GDAL REQUIRED)
 target_link_libraries(boundary PRIVATE GDAL::GDAL)
 
-set(ASSETS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/assets)
-set(ASSETS_OUT ${CMAKE_CURRENT_BINARY_DIR}/assets)
+set(RESOURCES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/resources)
+set(RESOURCES_OUT ${CMAKE_CURRENT_BINARY_DIR}/resources)
 
 add_custom_target(copy_assets ALL
-  COMMAND ${CMAKE_COMMAND} -E copy_directory ${ASSETS_DIR} ${ASSETS_OUT}
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${RESOURCES_DIR} ${RESOURCES_OUT}
   COMMENT "Copying assets to build directory"
 )
 
