@@ -12,7 +12,7 @@ extern "C" {
  * @param file_paths: Array of file paths
  * @param threads: Number of threads to use (default: 4)
  */
-void init_reader_meters(int N, const char* const* file_paths[N], int threads);
+void init_reader_meters(int N, const char* const* file_paths, int threads);
 
 #ifdef __cplusplus
 }
