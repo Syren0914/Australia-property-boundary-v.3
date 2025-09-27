@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { EnhancedCard } from './enhanced-card';
 import { EnhancedButton } from './enhanced-button';
 import { MapPin, TrendingUp, Calendar } from 'lucide-react';
@@ -15,6 +16,8 @@ interface ParcelInfoPanelProps {
   history?: ParcelHistoryPoint[];
   forecast?: ParcelHistoryPoint[];
   onClose?: () => void;
+  imageUrl?: string;
+  images?: { heading: number; url: string }[];
 }
 
 const currency = (n?: number) =>
@@ -26,7 +29,9 @@ export const ParcelInfoPanel: React.FC<ParcelInfoPanelProps> = ({
   currentValue,
   history = [],
   forecast = [],
-  onClose
+  onClose,
+  imageUrl,
+  images
 }) => {
   const chartData = useMemo(() => {
     const points = [...history, ...forecast].sort((a, b) => a.year - b.year);
@@ -104,31 +109,62 @@ export const ParcelInfoPanel: React.FC<ParcelInfoPanelProps> = ({
   };
 
   return (
-    <div style={{
-      position: 'absolute',
-      top: 16,
-      left: 16,
-      zIndex: 1001,
-      maxWidth: 360,
-      marginTop: 60
-    }}>
-      <EnhancedCard
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0, x: -24 }}
+        animate={{ opacity: 1, x: 0 }}
+        exit={{ opacity: 0, x: -24 }}
+        transition={{ type: 'spring', stiffness: 260, damping: 24 }}
+        style={{
+          position: 'absolute',
+          top: 16,
+          left: 16,
+          zIndex: 1001,
+          maxWidth: 360,
+          marginTop: 60
+        }}
+      >
+        <EnhancedCard
         title="Parcel Information"
         subtitle={address || 'Fetching address...'}
         icon={MapPin}
         variant="elevated"
       >
-        <div style={{ display: 'grid', gap: 8 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ fontSize: 13, color: '#6b7280' }}>Current Estimate</div>
-            <div style={{ fontSize: 18, fontWeight: 700 }}>
-              {currency(currentValue)}
+        <div style={{ display: 'grid', gap: 10 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', zIndex: 1, backgroundColor: '#ffffff' }}>
+            <div style={{ fontSize: 12, color: '#6b7280' }}>Current Estimate</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ fontSize: 20, fontWeight: 800 }}>
+                {currency(currentValue)}
+              </div>
+              <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 999, background: '#ecfdf5', color: '#065f46', border: '1px solid #a7f3d0' }}>
+                +4.1% YoY
+              </span>
             </div>
+          </div>
+          <div style={{ display: 'flex', gap: 12, color: '#6b7280', fontSize: 12 }}>
+            <div>Land area: <span style={{ color: '#111827', fontWeight: 600 }}>{/* area if provided */}</span></div>
+            <div>Updated: <span>today</span></div>
           </div>
 
           {/* Chart */}
+          {imageUrl && (
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
+              <img src={imageUrl} alt="Street view" style={{ width: '100%', display: 'block' }} />
+            </div>
+          )}
+          {images && images.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+              {images.map((img) => (
+                <a key={img.heading} href={`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${center[1]},${center[0]}&heading=${img.heading}&pitch=0&fov=80`} target="_blank" rel="noreferrer" style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+                  <img src={img.url} alt={`Street view ${img.heading}°`} style={{ width: '100%', display: 'block' }} />
+                </a>
+              ))}
+            </div>
+          )}
+
           {(history.length > 0 || forecast.length > 0) && (
-            <div style={{ backgroundColor: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 10, padding: 8 }}>
+            <div style={{ backgroundColor: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 10, padding: 8, overflow: 'hidden', marginTop: 6 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                 <Calendar size={14} />
                 <div style={{ fontSize: 12, color: '#6b7280', fontWeight: 600 }}>Value History & Forecast</div>
@@ -146,6 +182,13 @@ export const ParcelInfoPanel: React.FC<ParcelInfoPanelProps> = ({
               </div>
             </div>
           )}
+
+          {/* Actions */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <EnhancedButton variant="primary" size="sm">Analyze</EnhancedButton>
+            <EnhancedButton variant="secondary" size="sm">Floorplan 3D</EnhancedButton>
+            <EnhancedButton variant="ghost" size="sm">Export</EnhancedButton>
+          </div>
         </div>
 
         {onClose && (
@@ -153,8 +196,9 @@ export const ParcelInfoPanel: React.FC<ParcelInfoPanelProps> = ({
             <EnhancedButton variant="ghost" size="sm" onClick={onClose}>Close</EnhancedButton>
           </div>
         )}
-      </EnhancedCard>
-    </div>
+        </EnhancedCard>
+      </motion.div>
+    </AnimatePresence>
   );
 };
 

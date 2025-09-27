@@ -9,7 +9,6 @@ import { SubscriptionProvider, useSubscription } from './contexts/SubscriptionCo
 import { SubscriptionModal } from './components/SubscriptionModal';
 import { Analytics } from '@vercel/analytics/react';
 import { usePropertyValueEstimator } from './services/property-value-estimator';
-import { Floorplan3DModal, type FloorplanPlan, type FloorplanBuildParams } from './components/ui/floorplan-3d-modal';
 import { ParcelInfoPanel } from './components/ui/ParcelInfoPanel';
 import type * as GeoJSON from 'geojson';
 
@@ -131,11 +130,7 @@ function AppContent() {
   const isMobile = useMobileDetection();
   const { generateSampleData, estimateSingleProperty } = usePropertyValueEstimator();
   
-  // Floorplan-to-3D state
-  const [showFloorplanModal, setShowFloorplanModal] = useState(false);
-  const [pendingFloorplanPlan, setPendingFloorplanPlan] = useState<FloorplanPlan | null>(null);
-  const [pendingFloorplanParams, setPendingFloorplanParams] = useState<FloorplanBuildParams | null>(null);
-  const [isPlacingFloorplan, setIsPlacingFloorplan] = useState(false);
+  // Floorplan-to-3D removed
   
   // Refs to track current state values for event handlers
   const elevationToolActiveRef = useRef(false);
@@ -168,6 +163,8 @@ function AppContent() {
   const [selectedParcelValue, setSelectedParcelValue] = useState<number | undefined>(undefined);
   const [selectedParcelHistory, setSelectedParcelHistory] = useState<{ year: number; value: number }[]>([]);
   const [selectedParcelForecast, setSelectedParcelForecast] = useState<{ year: number; value: number }[]>([]);
+  const [selectedParcelImage, setSelectedParcelImage] = useState<string | undefined>(undefined);
+  const [selectedParcelImages, setSelectedParcelImages] = useState<{ heading: number; url: string }[]>([]);
 
   // Generate property value data for overlay
   const generatePropertyValueData = () => {
@@ -176,88 +173,64 @@ function AppContent() {
     setPropertyValueData(estimatedProperties);
   };
 
-  // Build floorplan handler (from modal)
-  const handleBuildFloorplan = (plan: FloorplanPlan, params: FloorplanBuildParams) => {
-    setPendingFloorplanPlan(plan);
-    setPendingFloorplanParams(params);
-    setIsPlacingFloorplan(true);
-  };
+  // Floorplan extrusion code removed
 
-  // Utility: convert local plan (meters) offset to lon/lat offset at anchor
-  const metersToLngLatOffset = (dxMeters: number, dyMeters: number, anchorLat: number): [number, number] => {
-    const R = 6378137; // meters
-    const dLat = (dyMeters / R) * (180 / Math.PI);
-    const dLng = (dxMeters / (R * Math.cos((anchorLat * Math.PI) / 180))) * (180 / Math.PI);
-    return [dLng, dLat];
-  };
-
-  // Create wall rectangles as polygons (simple rectangle per segment)
-  const buildWallPolygons = (
-    plan: FloorplanPlan,
-    params: FloorplanBuildParams,
-    anchor: [number, number]
-  ): GeoJSON.Feature<GeoJSON.Polygon, { height: number }>[] => {
-    const features: GeoJSON.Feature<GeoJSON.Polygon, { height: number }>[] = [];
-    const angle = (params.rotationDeg * Math.PI) / 180;
-    const cosA = Math.cos(angle);
-    const sinA = Math.sin(angle);
-    const thickness = params.defaultThicknessMeters;
-    const halfT = thickness / 2;
-    const unitToM = params.unitToMeter;
-
-    const rotate = (x: number, y: number) => {
-      return [x * cosA - y * sinA, x * sinA + y * cosA] as [number, number];
-    };
-
-    for (const w of plan.walls) {
-      const p1m: [number, number] = [w.p1[0] * unitToM, w.p1[1] * unitToM];
-      const p2m: [number, number] = [w.p2[0] * unitToM, w.p2[1] * unitToM];
-      const t = (w.thickness ?? thickness);
-      const tHalf = (t * unitToM) / 2;
-
-      const dx = p2m[0] - p1m[0];
-      const dy = p2m[1] - p1m[1];
-      const len = Math.hypot(dx, dy) || 1;
-      const nx = -dy / len; // left normal
-      const ny = dx / len;
-
-      // Four corners around the segment centerline
-      const c1: [number, number] = [p1m[0] + nx * tHalf, p1m[1] + ny * tHalf];
-      const c2: [number, number] = [p2m[0] + nx * tHalf, p2m[1] + ny * tHalf];
-      const c3: [number, number] = [p2m[0] - nx * tHalf, p2m[1] - ny * tHalf];
-      const c4: [number, number] = [p1m[0] - nx * tHalf, p1m[1] - ny * tHalf];
-
-      // Rotate
-      const r1 = rotate(c1[0], c1[1]);
-      const r2 = rotate(c2[0], c2[1]);
-      const r3 = rotate(c3[0], c3[1]);
-      const r4 = rotate(c4[0], c4[1]);
-
-      // Convert to lon/lat
-      const aLngLat = anchor as [number, number];
-      const lat = aLngLat[1];
-      const o1 = metersToLngLatOffset(r1[0], r1[1], lat);
-      const o2 = metersToLngLatOffset(r2[0], r2[1], lat);
-      const o3 = metersToLngLatOffset(r3[0], r3[1], lat);
-      const o4 = metersToLngLatOffset(r4[0], r4[1], lat);
-
-      const poly: GeoJSON.Feature<GeoJSON.Polygon, { height: number }> = {
-        type: 'Feature',
-        geometry: {
-          type: 'Polygon',
-          coordinates: [[
-            [aLngLat[0] + o1[0], aLngLat[1] + o1[1]],
-            [aLngLat[0] + o2[0], aLngLat[1] + o2[1]],
-            [aLngLat[0] + o3[0], aLngLat[1] + o3[1]],
-            [aLngLat[0] + o4[0], aLngLat[1] + o4[1]],
-            [aLngLat[0] + o1[0], aLngLat[1] + o1[1]],
-          ]]
-        },
-        properties: { height: params.heightMeters }
-      };
-      features.push(poly);
+  // Reverse geocoding (MapTiler if key provided, fallback to OSM Nominatim)
+  const reverseGeocode = async ([lng, lat]: [number, number]): Promise<string | undefined> => {
+    try {
+      const key = import.meta.env.VITE_MAPTILER_KEY as string | undefined;
+      if (key) {
+        const r = await fetch(`https://api.maptiler.com/geocoding/${lng},${lat}.json?key=${key}`);
+        if (r.ok) {
+          const data = await r.json();
+          return (
+            data?.features?.[0]?.place_name ||
+            data?.features?.[0]?.properties?.label ||
+            undefined
+          );
+        }
+      }
+      // Fallback: Nominatim (rate-limited, add UA)
+      const rr = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&addressdetails=1`,
+        { headers: { 'User-Agent': 'property-boundary-viewer/1.0' } }
+      );
+      if (rr.ok) {
+        const data = await rr.json();
+        return data?.display_name as string | undefined;
+      }
+    } catch (e) {
+      console.warn('reverseGeocode failed', e);
     }
-    return features;
+    return undefined;
+  };
+
+  // Google Street View static image (if key is configured)
+  const getStreetViewUrl = ([lng, lat]: [number, number]): string | undefined => {
+    const key = import.meta.env.VITE_GOOGLE_MAPS_KEY as string | undefined;
+    if (!key) return undefined;
+    // Adjust fov/heading/pitch if desired; keep basic for now
+    return `https://maps.googleapis.com/maps/api/streetview?size=640x360&location=${lat},${lng}&fov=80&pitch=0&key=${key}`;
+  };
+
+  const streetViewThumb = (
+    { lng, lat, heading = 0, pitch = 0, size = '320x180' }:
+    { lng: number; lat: number; heading?: number; pitch?: number; size?: string }
+  ): string | undefined => {
+    const key = import.meta.env.VITE_GOOGLE_MAPS_KEY as string | undefined;
+    if (!key) return undefined;
+    return `https://maps.googleapis.com/maps/api/streetview?size=${size}&location=${lat},${lng}&heading=${heading}&pitch=${pitch}&fov=80&key=${key}`;
+  };
+
+  const buildStreetViewGallery = ([lng, lat]: [number, number]) => {
+    // Use three directions for a concise gallery
+    const headings = [0, 120, 240];
+    const out: { heading: number; url: string }[] = [];
+    for (const h of headings) {
+      const url = streetViewThumb({ lng, lat, heading: h });
+      if (url) out.push({ heading: h, url });
+    }
+    return out;
   };
 
   // Toggle property value visibility
@@ -723,45 +696,6 @@ function AppContent() {
 
     // Combined click handler for both elevation tool and property selection
     map.on('click', (e) => {
-      // Floorplan placement mode: first map click anchors the model
-      if (isPlacingFloorplan && pendingFloorplanPlan && pendingFloorplanParams) {
-        const anchor: [number, number] = [e.lngLat.lng, e.lngLat.lat];
-
-        const walls = buildWallPolygons(pendingFloorplanPlan, pendingFloorplanParams, anchor);
-        const sourceId = 'floorplan-walls';
-        const layerId = 'floorplan-walls-extrusion';
-
-        try {
-          if (map.getLayer(layerId)) map.removeLayer(layerId);
-          if (map.getSource(sourceId)) map.removeSource(sourceId);
-        } catch {}
-
-        map.addSource(sourceId, {
-          type: 'geojson',
-          data: {
-            type: 'FeatureCollection',
-            features: walls
-          }
-        });
-
-        map.addLayer({
-          id: layerId,
-          type: 'fill-extrusion',
-          source: sourceId,
-          paint: {
-            'fill-extrusion-color': '#9ca3af',
-            'fill-extrusion-height': ['get', 'height'],
-            'fill-extrusion-base': 0,
-            'fill-extrusion-opacity': 0.9
-          }
-        });
-
-        setIsPlacingFloorplan(false);
-        setPendingFloorplanPlan(null);
-        setPendingFloorplanParams(null);
-        return;
-      }
-
       console.log('Map clicked, elevationToolActive:', elevationToolActiveRef.current, 'isDrawing:', isDrawingRef.current);
       if (elevationToolActiveRef.current) {
         // Elevation tool takes priority
@@ -850,9 +784,13 @@ function AppContent() {
       // mark parcel selected
       setSelectedParcel({ center, area });
 
-      // reverse geocode (placeholder using feature props if present)
-      const addr = (feature.properties && (feature.properties['address'] || feature.properties['name'])) || undefined;
-      setSelectedParcelAddress(addr);
+      // reverse geocode
+      reverseGeocode(center).then(setSelectedParcelAddress);
+
+      // street view image
+      const img = getStreetViewUrl(center);
+      setSelectedParcelImage(img);
+      setSelectedParcelImages(buildStreetViewGallery(center));
 
       // value estimation & history/forecast (synthetic until real API)
       const base = 450000 + Math.random() * 400000;
@@ -1095,7 +1033,6 @@ function AppContent() {
         showPropertyValues={showPropertyValues}
         togglePropertyValues={togglePropertyValues}
         parcelSelected={!!selectedParcel}
-        setShowFloorplanModal={setShowFloorplanModal}
       />
       
       <EnhancedElevationChart
@@ -1167,6 +1104,8 @@ function AppContent() {
           currentValue={selectedParcelValue}
           history={selectedParcelHistory}
           forecast={selectedParcelForecast}
+          imageUrl={selectedParcelImage}
+          images={selectedParcelImages}
         />
       )}
 

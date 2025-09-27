@@ -18,8 +18,7 @@ import {
   Zap,
   Brain,
   Sparkles,
-  DollarSign,
-  Layers
+  DollarSign
 } from 'lucide-react';
 import { EnhancedButton } from './enhanced-button';
 import { EnhancedCard } from './enhanced-card';
@@ -64,7 +63,6 @@ interface ModernSidebarProps {
   showPropertyValues: boolean;
   togglePropertyValues: () => void;
   parcelSelected: boolean;
-  setShowFloorplanModal: (show: boolean) => void;
 }
 
 export const ModernSidebar: React.FC<ModernSidebarProps> = ({
@@ -99,8 +97,7 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
   setSelectedProperty,
   showPropertyValues,
   togglePropertyValues,
-  parcelSelected,
-  setShowFloorplanModal
+  parcelSelected
 }) => {
   const [isMobile, setIsMobile] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
@@ -501,20 +498,7 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
                 {elevationToolActive ? 'Deactivate' : 'Activate'} Elevation Tool
               </EnhancedButton>
               
-              {parcelSelected && (
-                <EnhancedButton
-                  onClick={() => {
-                    setShowFloorplanModal(true);
-                    setShowMobileMenu(false);
-                  }}
-                  variant={"secondary"}
-                  size="md"
-                  icon={Layers}
-                  fullWidth
-                >
-                  Floorplan 3D
-                </EnhancedButton>
-              )}
+              {/* Floorplan 3D removed (mobile) */}
 
               <EnhancedButton
                 onClick={() => {
