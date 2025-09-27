@@ -2,7 +2,9 @@
 #include <read.hpp>
 #include <global.hpp>
 
+
 static void computeAABBsForFile(const char* path, StateList& states) {
+
   GDALDatasetUniquePtr ds(GDALDataset::Open(path, GA_ReadOnly));
 
   if (!ds) {
