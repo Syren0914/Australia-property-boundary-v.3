@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <omp.h>
 
-#define DEPTH_LIMIT 7
+#define DEPTH_LIMIT 14
 
 // helper
 static inline AABB unite(const AABB& a, const AABB& b) {
