@@ -3,20 +3,23 @@
 #include <vector>
 #include "AABB.hpp"
 
-public struct State {
-	AABB props[];
+struct State {
+    public:
+        AABB props[1];
 };
 
-public class StateList {
-	private:
-		std::vector<State> states;
-	public:
-		StateList(int N) {
-			aabbs.reserve(N);
-		}
+class StateList {
+    private:
+        std::vector<State> states;
+    public:
+        StateList() = default;
+        StateList(int N) {
+        }
 
-		~StateList();
+        ~StateList();
 
-		AABB* get_props(void);
-		void add(State state);
+        AABB* get_props(void);
+        void add(State state);
 };
+
+void computeAABBsForFile(const char* path, StateList& states);

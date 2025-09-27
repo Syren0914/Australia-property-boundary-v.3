@@ -1,5 +1,8 @@
 #define CATCH_CONFIG_MAIN
 #include "catch2/catch.hpp"
+#include "AABB.hpp"
+#include "read.hpp"
+#include "reader.h"
 #include <cstdint>
 
 uint32_t factorial( uint32_t number ) {
@@ -13,3 +16,8 @@ TEST_CASE("Factorials are computed", "[factorial]") {
     REQUIRE(factorial(10) == 3'628'800 );
 }
 
+//TEST_CASE("All layers in wi-parcels.pmtiles are processed", "[pmtiles]") {
+//    StateList states;
+//    computeAABBsForFile("testdata/wi-parcels.pmtiles", states);
+//    // REQUIRE: All layers processed, AABBs added for all features
+//}

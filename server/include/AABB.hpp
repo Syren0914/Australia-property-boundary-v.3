@@ -1,6 +1,7 @@
 #pragma once
 
-public struct AABB {
-	double min[2];
-	double max[2];
+struct AABB {
+    public:
+        double min[2];
+        double max[2];
 };
