@@ -21,9 +21,14 @@
 #include <vector>
 #include <string>
 #include <omp.h>
+#include <limits>
 
 const char* targetEPSG = "EPSG:5070";
 States states{0, nullptr};
+std::size_t props_data_bytes = 0;
+
+using VertexList = std::vector<Vertex>;
+using PropertyList = std::vector<VertexList>;
 
 namespace {
 
@@ -92,10 +97,71 @@ static CTUP make_transform(OGRLayer* layer, const OGRSpatialReference& dst)
     return transform;
 }
 
-static void collect_layer_aabbs(GDALDataset* ds,
+static void append_ring_vertices(const OGRLinearRing* ring, VertexList& out)
+{
+    if (!ring) return;
+
+    int count = ring->getNumPoints();
+    if (count <= 0) return;
+
+    const bool closed = ring->get_IsClosed();
+    if (closed && count > 0) {
+        --count; // skip the duplicated closing vertex
+    }
+
+    out.reserve(out.size() + static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        Vertex v{ ring->getX(i), ring->getY(i) };
+        if (!std::isfinite(v.x) || !std::isfinite(v.y)) continue;
+        out.push_back(v);
+    }
+}
+
+static bool collect_geometry_vertices(OGRGeometry* geom, VertexList& coords)
+{
+    if (!geom || geom->IsEmpty()) return false;
+
+    const OGRwkbGeometryType type = wkbFlatten(geom->getGeometryType());
+
+    switch (type) {
+        case wkbPolygon: {
+            OGRPolygon* poly = geom->toPolygon();
+            if (!poly) return false;
+            append_ring_vertices(poly->getExteriorRing(), coords);
+            const int holeCount = poly->getNumInteriorRings();
+            for (int i = 0; i < holeCount; ++i) {
+                append_ring_vertices(poly->getInteriorRing(i), coords);
+            }
+            break;
+        }
+        case wkbMultiPolygon: {
+            OGRMultiPolygon* multi = geom->toMultiPolygon();
+            if (!multi) return false;
+            const int geomCount = multi->getNumGeometries();
+            for (int i = 0; i < geomCount; ++i) {
+                OGRGeometry* subGeom = multi->getGeometryRef(i);
+                if (!subGeom) continue;
+                OGRPolygon* poly = subGeom->toPolygon();
+                if (!poly) continue;
+                append_ring_vertices(poly->getExteriorRing(), coords);
+                const int holeCount = poly->getNumInteriorRings();
+                for (int h = 0; h < holeCount; ++h) {
+                    append_ring_vertices(poly->getInteriorRing(h), coords);
+                }
+            }
+            break;
+        }
+        default:
+            return false;
+    }
+
+    return !coords.empty();
+}
+
+static void collect_layer_props(GDALDataset* ds,
                                 OGRLayer* base,
                                 const OGRSpatialReference& dst,
-                                std::vector<AABB>& out)
+                                std::vector<VertexList>& out)
 {
     if (!base) return;
 
@@ -124,30 +190,21 @@ static void collect_layer_aabbs(GDALDataset* ds,
             geom = owned.get();
         }
 
-        OGREnvelope e; geom->getEnvelope(&e);
-        if (!std::isfinite(e.MinX) || !std::isfinite(e.MinY) ||
-            !std::isfinite(e.MaxX) || !std::isfinite(e.MaxY)) {
+        VertexList coords;
+        if (!collect_geometry_vertices(geom, coords)) {
             OGRFeature::DestroyFeature(f);
             continue;
         }
 
-        AABB box;
-        box.min[0] = e.MinX;  box.min[1] = e.MinY;
-        box.max[0] = e.MaxX;  box.max[1] = e.MaxY;
-
-        #ifdef AABB_HAS_FID
-        box.fid = f->GetFID();
-        #endif
-
-        out.push_back(box);
+        out.push_back(std::move(coords));
         OGRFeature::DestroyFeature(f);
     }
 
     if (used_sql) ds->ReleaseResultSet(layer);
 }
 
-static void read_file_aabbs_once(
-    const char* path, const char* targetEPSG, std::vector<AABB>& outVec)
+static void read_file_props_once(
+    const char* path, const char* targetEPSG, std::vector<VertexList>& outVec)
 {
     WarningSilencer guard;
 
@@ -172,7 +229,7 @@ static void read_file_aabbs_once(
     if (estimate) outVec.reserve(outVec.size() + estimate);
 
     for (int li = 0; li < layerCount; ++li) {
-        collect_layer_aabbs(ds, ds->GetLayer(li), dst, outVec);
+        collect_layer_props(ds, ds->GetLayer(li), dst, outVec);
     }
 
     GDALClose(ds);
@@ -180,33 +237,94 @@ static void read_file_aabbs_once(
 
 } // namespace
 
-void init_reader_meters(int N, const char* const* file_paths, int threads = 32) {
+void init_reader_meters(int N, const char* const* file_paths, int threads = 4) {
     GDALAllRegister();
 
-    std::vector<std::vector<AABB>> perFile(N);
+    if (states.props) {
+        std::free(states.props);
+        states.props = nullptr;
+    }
+    props_data_bytes = 0;
+    states.prop_count = 0;
+
+    std::vector<PropertyList> perFile(N);
 
     #pragma omp parallel for schedule(dynamic) num_threads(threads)
     for (int i = 0; i < N; ++i) {
-        read_file_aabbs_once(file_paths[i], targetEPSG, perFile[i]);
+        read_file_props_once(file_paths[i], targetEPSG, perFile[i]);
     }
 
-    size_t total = 0;
-    for (int i = 0; i < N; ++i) total += perFile[i].size();
+    size_t totalProps = 0;
+    size_t totalBytes = 0;
+    const size_t align = alignof(Props);
 
-    states.prop_count = total;
-    states.props = static_cast<AABB*>(std::malloc(total * sizeof(AABB)));
-    if (!states.props) {
-        std::fprintf(stderr, "malloc failed for %zu AABBs\n", total);
-        states.prop_count = 0;
+    for (const auto& fileProps : perFile) {
+        totalProps += fileProps.size();
+        for (const auto& coords : fileProps) {
+            const size_t coordCount = coords.size();
+            size_t bytes = sizeof(Props) + coordCount * sizeof(Vertex);
+            // keep each instance aligned for safe traversal later
+            totalBytes += (bytes + (align - 1)) & ~(align - 1);
+        }
+    }
+
+    if (totalProps > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        std::fprintf(stderr, "too many properties (%zu) to fit into States::prop_count\n", totalProps);
         return;
     }
 
-    size_t off = 0;
-    for (int i = 0; i < N; ++i) {
-        const auto& v = perFile[i];
-        if (!v.empty()) {
-            std::memcpy(states.props + off, v.data(), v.size() * sizeof(AABB));
-            off += v.size();
+    states.prop_count = static_cast<int>(totalProps);
+    if (states.prop_count == 0) {
+        return;
+    }
+
+    if (totalBytes == 0) {
+        totalBytes = static_cast<size_t>(states.prop_count) * sizeof(Props);
+    }
+
+    states.props = static_cast<Props*>(std::malloc(totalBytes));
+    if (!states.props) {
+        std::fprintf(stderr, "malloc failed for %zu bytes of Props data\n", totalBytes);
+        states.prop_count = 0;
+        props_data_bytes = 0;
+        return;
+    }
+
+    unsigned char* cursor = reinterpret_cast<unsigned char*>(states.props);
+    unsigned char* const end = cursor + totalBytes;
+
+    for (const auto& fileProps : perFile) {
+        for (const auto& coords : fileProps) {
+            Props* prop = reinterpret_cast<Props*>(cursor);
+
+            if (coords.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+                std::fprintf(stderr, "property has too many vertices (%zu)\n", coords.size());
+                prop->coords_count = 0;
+            } else {
+                prop->coords_count = static_cast<int>(coords.size());
+                if (!coords.empty()) {
+                    std::memcpy(prop->coords, coords.data(), coords.size() * sizeof(Vertex));
+                }
+            }
+
+            const size_t coordCount = coords.size();
+            size_t bytes = sizeof(Props) + coordCount * sizeof(Vertex);
+            bytes = (bytes + (align - 1)) & ~(align - 1);
+            cursor += bytes;
         }
     }
+
+    if (cursor != end) {
+        // Should never happen, but guard against accounting mistakes.
+        std::fprintf(stderr, "reader accounting mismatch: allocated %zu bytes, used %zu\n",
+                     static_cast<size_t>(end - reinterpret_cast<unsigned char*>(states.props)),
+                     static_cast<size_t>(cursor - reinterpret_cast<unsigned char*>(states.props)));
+        states.prop_count = 0;
+        std::free(states.props);
+        states.props = nullptr;
+        props_data_bytes = 0;
+        return;
+    }
+
+    props_data_bytes = totalBytes;
 }
