@@ -13,6 +13,13 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 # Add the main executable
 add_executable(boundary src/main.cpp)
 
+find_package(OpenMP)
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(boundary PRIVATE OpenMP::OpenMP_CXX)
+else()
+  message(WARNING "OpenMP not found; building without OpenMP")
+endif()
+
 # Add the test executable
 #add_executable(my_test tests/test.cpp)
 
