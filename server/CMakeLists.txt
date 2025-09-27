@@ -41,6 +41,10 @@ add_executable(my_test tests/test.cpp src/node.cpp)
 # Include directories for the test target
 target_include_directories(my_test PRIVATE ${PROJECT_SOURCE_DIR}/include)
 
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(my_test PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
 # Enable testing
 enable_testing()
 

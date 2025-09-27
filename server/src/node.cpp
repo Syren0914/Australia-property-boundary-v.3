@@ -8,11 +8,15 @@
 #include <limits>
 #include <vector>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 std::vector<Node> all_nodes;
 
 namespace {
 
-constexpr std::size_t kLeafSize = 8;
+constexpr std::size_t kLeafSize = 16;
 
 std::vector<PropRef> prop_refs;
 
@@ -140,7 +144,9 @@ static Node* build_recursive(PropRef* begin, PropRef* end) {
 } // namespace
 
 void Node::build_tree(int threads) {
+#ifndef _OPENMP
     (void)threads;
+#endif
 
     const std::size_t prop_count = static_cast<std::size_t>(states.prop_count);
 
@@ -151,16 +157,20 @@ void Node::build_tree(int threads) {
         return;
     }
 
-    prop_refs.reserve(prop_count);
+    prop_refs.assign(prop_count, PropRef{});
     all_nodes.reserve(std::max<std::size_t>(1, 2 * prop_count));
 
-    const unsigned char* cursor = reinterpret_cast<const unsigned char*>(states.props);
-    const unsigned char* const end = cursor + props_data_bytes;
+    const unsigned char* const base = reinterpret_cast<const unsigned char*>(states.props);
+    const unsigned char* cursor = base;
+    const unsigned char* const end = base + props_data_bytes;
+
+    std::vector<std::size_t> offsets;
+    offsets.reserve(prop_count);
 
     for (std::size_t i = 0; i < prop_count; ++i) {
-        const Props* prop = reinterpret_cast<const Props*>(cursor);
-        prop_refs.push_back(make_prop_ref(prop));
+        offsets.push_back(static_cast<std::size_t>(cursor - base));
 
+        const Props* prop = reinterpret_cast<const Props*>(cursor);
         const std::size_t coords_count = (prop && prop->coords_count > 0)
             ? static_cast<std::size_t>(prop->coords_count)
             : 0;
@@ -175,19 +185,29 @@ void Node::build_tree(int threads) {
 
     if (cursor != end) {
         std::fprintf(stderr,
-            "node traversal ended at %zu bytes, expected %zu\n",
-            static_cast<size_t>(cursor - reinterpret_cast<const unsigned char*>(states.props)),
-            props_data_bytes
-        );
-
+                     "node traversal ended at %zu bytes, expected %zu\n",
+                     static_cast<size_t>(cursor - reinterpret_cast<const unsigned char*>(states.props)),
+                     props_data_bytes);
         all_nodes.clear();
         prop_refs.clear();
         return;
     }
 
-    if (prop_refs.empty()) {
-        return;
+#ifdef _OPENMP
+    const bool can_parallel = threads > 1;
+    #pragma omp parallel for schedule(static) if(can_parallel) num_threads(threads)
+    for (std::ptrdiff_t i = 0; i < static_cast<std::ptrdiff_t>(prop_count); ++i) {
+        const std::size_t offset = offsets[static_cast<std::size_t>(i)];
+        const Props* prop = reinterpret_cast<const Props*>(base + offset);
+        prop_refs[static_cast<std::size_t>(i)] = make_prop_ref(prop);
     }
+#else
+    for (std::size_t i = 0; i < prop_count; ++i) {
+        const std::size_t offset = offsets[i];
+        const Props* prop = reinterpret_cast<const Props*>(base + offset);
+        prop_refs[i] = make_prop_ref(prop);
+    }
+#endif
 
     build_recursive(prop_refs.data(), prop_refs.data() + prop_refs.size());
 }

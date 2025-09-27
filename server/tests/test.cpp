@@ -4,6 +4,7 @@
 #include "read.hpp"
 #include "reader.h"
 #include <cstdint>
+#include <algorithm>
 #include <vector>
 
 #include <global.hpp>
@@ -12,11 +13,6 @@ States states{0, nullptr};
 std::size_t props_data_bytes = 0;
 
 namespace {
-
-struct PropStorage {
-    Props header;
-    Vertex coords[4];
-};
 
 static std::size_t stride_for(int coord_count) {
     const std::size_t align = alignof(Props);
@@ -84,6 +80,73 @@ TEST_CASE("BVH camera query returns full properties", "[bvh]") {
 
     REQUIRE(visible.size() == 1);
     REQUIRE(visible.front() == prop1);
+
+    states.props = nullptr;
+    states.prop_count = 0;
+    props_data_bytes = 0;
+}
+
+TEST_CASE("Parallel BVH build matches serial", "[bvh][parallel]") {
+    constexpr std::size_t prop_count = 1024;
+    const std::size_t stride = stride_for(5);
+
+    std::vector<std::uint8_t> storage(prop_count * stride);
+
+    for (std::size_t i = 0; i < prop_count; ++i) {
+        auto* prop = reinterpret_cast<Props*>(storage.data() + i * stride);
+        prop->coords_count = 5;
+
+        const double baseX = static_cast<double>(i % 32) * 200.0;
+        const double baseY = static_cast<double>(i / 32) * 200.0;
+
+        prop->coords[0] = {baseX, baseY};
+        prop->coords[1] = {baseX, baseY + 50.0};
+        prop->coords[2] = {baseX + 50.0, baseY + 50.0};
+        prop->coords[3] = {baseX + 50.0, baseY};
+        prop->coords[4] = {baseX, baseY};
+    }
+
+    states.props = reinterpret_cast<Props*>(storage.data());
+    states.prop_count = static_cast<int>(prop_count);
+    props_data_bytes = storage.size();
+
+    Node::build_tree(/*threads*/4);
+    REQUIRE_FALSE(all_nodes.empty());
+
+    const std::size_t target = 777;
+    const double targetX = static_cast<double>(target % 32) * 200.0;
+    const double targetY = static_cast<double>(target / 32) * 200.0;
+
+    CameraMeters cam{};
+    cam.view.min[0] = targetX - 10.0;
+    cam.view.min[1] = targetY - 10.0;
+    cam.view.max[0] = targetX + 60.0;
+    cam.view.max[1] = targetY + 60.0;
+    cam.meters_per_pixel = 1.0;
+
+    std::vector<const Props*> visible_parallel;
+    all_nodes.front().collect_visible(cam, visible_parallel);
+
+    REQUIRE_FALSE(visible_parallel.empty());
+    REQUIRE(std::find(visible_parallel.begin(), visible_parallel.end(),
+                      reinterpret_cast<Props*>(storage.data() + target * stride))
+            != visible_parallel.end());
+
+    const AABB root_parallel = all_nodes.front().box;
+
+    Node::build_tree(/*threads*/1);
+    REQUIRE_FALSE(all_nodes.empty());
+
+    std::vector<const Props*> visible_serial;
+    all_nodes.front().collect_visible(cam, visible_serial);
+
+    REQUIRE(visible_parallel.size() == visible_serial.size());
+    std::sort(visible_parallel.begin(), visible_parallel.end());
+    std::sort(visible_serial.begin(), visible_serial.end());
+    REQUIRE(visible_parallel == visible_serial);
+
+    const AABB root_serial = all_nodes.front().box;
+    REQUIRE(root_parallel.approxEq(root_serial));
 
     states.props = nullptr;
     states.prop_count = 0;
