@@ -8,11 +8,11 @@
 extern "C" {
 #endif
 
-/* @param N: Number of files
- * @param files: Array of file paths
+/* @param N: Number of file_paths
+ * @param file_paths: Array of file paths
  * @param threads: Number of threads to use (default: 4)
  */
-void init_reader_meters(int N, const char* files[N], int threads);
+void init_reader_meters(int N, const char* file_paths[N], int threads);
 
 #ifdef __cplusplus
 }

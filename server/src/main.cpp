@@ -4,6 +4,8 @@
 #include <omp.h>
 #endif
 
+#include <reader.h>
+
 int main()
 {
     #pragma omp parallel for
@@ -14,6 +16,8 @@ int main()
       std::printf("Hello (no OpenMP)\n");
 #endif
     }
+
+    init_reader_meters(1,(const char*[]){"Hi"}, 4);
 
     return 0;
 }

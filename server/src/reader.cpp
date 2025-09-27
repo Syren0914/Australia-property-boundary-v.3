@@ -111,12 +111,12 @@ static std::size_t fill_aabbs_meters(const char* path, const char* targetEPSG,
     return written;
 }
 
-void init_reader_meters(int N, const char* files[N], int threads = 4) {
+void init_reader_meters(int N, const char* file_paths[N], int threads = 4) {
     GDALAllRegister();
 
     std::vector<std::size_t> counts(N, 0);
     #pragma omp parallel for schedule(dynamic) num_threads(threads)
-    for (int i = 0; i < N; ++i) counts[i] = count_features(files[i]);
+    for (int i = 0; i < N; ++i) counts[i] = count_features(file_paths[i]);
 
     std::vector<std::size_t> offsets(N, 0);
     std::size_t total = 0;
@@ -136,6 +136,6 @@ void init_reader_meters(int N, const char* files[N], int threads = 4) {
     #pragma omp parallel for schedule(dynamic) num_threads(threads)
     for (int i = 0; i < N; ++i) {
         AABB* base = states.props + offsets[i];
-        (void)fill_aabbs_meters(files[i], targetEPSG, base, counts[i]);
+        (void)fill_aabbs_meters(file_paths[i], targetEPSG, base, counts[i]);
     }
 }
