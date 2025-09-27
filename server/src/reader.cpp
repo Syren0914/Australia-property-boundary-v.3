@@ -111,7 +111,7 @@ static std::size_t fill_aabbs_meters(const char* path, const char* targetEPSG,
     return written;
 }
 
-void init_reader_meters(int N, const char** files, int threads = 4) {
+void init_reader_meters(int N, const char* files[N], int threads = 4) {
     GDALAllRegister();
 
     std::vector<std::size_t> counts(N, 0);
