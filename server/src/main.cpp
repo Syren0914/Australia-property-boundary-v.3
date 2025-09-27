@@ -17,7 +17,8 @@ int main()
 #endif
     }
 
-    init_reader_meters(1,(const char*[]){"Hi"}, 4);
+    const char* paths[] = {"file1.shp", "file2.shp"};
+    init_reader_meters(1,paths, 4);
 
     return 0;
 }
