@@ -68,10 +68,9 @@ static std::size_t fill_aabbs_meters(const char* path, const char* targetEPSG,
 
         OGRSpatialReference* src = layer->GetSpatialRef();
 
-        // unique_ptr with the RIGHT deleter type (C++ API)
         CTUP toMeters(nullptr, &CT::DestroyCT);
         if (src && !src->IsSame(&dst)) {
-            toMeters.reset(OGRCreateCoordinateTransformation(src, &dst)); // C++ API
+            toMeters.reset(OGRCreateCoordinateTransformation(src, &dst));
         }
 
         layer->ResetReading();
@@ -96,7 +95,6 @@ static std::size_t fill_aabbs_meters(const char* path, const char* targetEPSG,
                 OGRFeature::DestroyFeature(f); continue;
             }
 
-            // Write explicitly to match your AABB layout.
             out[written].min[0] = e.MinX;  // meters
             out[written].min[1] = e.MinY;
             out[written].max[0] = e.MaxX;
@@ -120,10 +118,12 @@ void init_reader_meters(int N, const char** files, int threads = 4) {
     #pragma omp parallel for schedule(dynamic) num_threads(threads)
     for (int i = 0; i < N; ++i) counts[i] = count_features(files[i]);
 
-    // Offsets & total
     std::vector<std::size_t> offsets(N, 0);
     std::size_t total = 0;
-    for (int i = 0; i < N; ++i) { offsets[i] = total; total += counts[i]; }
+
+    for (int i = 0; i < N; ++i) {
+        offsets[i] = total; total += counts[i];
+    }
 
     states.prop_count = total;
     states.props = static_cast<AABB*>(std::malloc(total * sizeof(AABB)));
