@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cam.hpp>
+
 class Node {
     private:
         AABB box;
@@ -14,5 +16,5 @@ class Node {
         Node() = default;
         Node(AABB* begin, AABB* end, int threads);
 
-        void cam_location(double lon, double lat, double zoom);
+        void nodes_intersect(const Camera& cam, Node*& nodes);
 };

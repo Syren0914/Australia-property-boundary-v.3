@@ -12,7 +12,17 @@ namespace {
 
 std::vector<AABB> prop_boxes;
 
-// helper
+
+/*
+ * Helper Inliners
+ */
+
+static inline bool node_insersect(const AABB& box, const Camera& cam) {
+    const auto& view = cam.get_camera_meters().view;
+    return !(box.max[0] < view.min[0] || view.max[0] < box.min[0] ||
+             box.max[1] < view.min[1] || view.max[1] < box.min[1]);
+}
+
 static inline AABB unite(const AABB& a, const AABB& b) {
     AABB r;
     r.min[0] = std::min(a.min[0], b.min[0]);
@@ -137,6 +147,10 @@ void Node::build_tree(int threads) {
 
         if (level == 1) break;
     }
+}
+
+void Node::nodes_intersect(const Camera& cam, Node*& node) {
+    memset(node, 0, sizeof(node[0]) * states.prop_count);
 }
 
 Node::Node(AABB* begin, AABB* end, int threads) {

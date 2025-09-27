@@ -26,10 +26,14 @@ target_link_libraries(boundary PRIVATE GDAL::GDAL)
 set(RESOURCES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/resources)
 set(RESOURCES_OUT ${CMAKE_CURRENT_BINARY_DIR}/resources)
 
-add_custom_target(copy_assets ALL
-  COMMAND ${CMAKE_COMMAND} -E copy_directory ${RESOURCES_DIR} ${RESOURCES_OUT}
-  COMMENT "Copying assets to build directory"
-)
+if(EXISTS ${RESOURCES_DIR})
+  add_custom_target(copy_assets ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${RESOURCES_DIR} ${RESOURCES_OUT}
+    COMMENT "Copying assets to build directory"
+  )
+else()
+  message(STATUS "No assets directory found at ${RESOURCES_DIR}; skipping copy")
+endif()
 
 # Add the test executable
 add_executable(my_test tests/test.cpp)
@@ -42,4 +46,3 @@ enable_testing()
 
 # Register the test executable with CTest (optional)
 add_test(NAME my_test COMMAND my_test)
-
