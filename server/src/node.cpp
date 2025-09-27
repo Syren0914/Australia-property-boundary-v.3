@@ -1,36 +1,20 @@
 #include <global.hpp>
-#include <limits>
-#include <algorithm>
-#include <vector>
-#include <cmath>
-#include <cstdio>
-#include <omp.h>
+#include <cam.hpp>
 
-#define DEPTH_LIMIT 14
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdio>
+#include <limits>
+#include <vector>
+
+std::vector<Node> all_nodes;
 
 namespace {
 
-std::vector<AABB> prop_boxes;
+constexpr std::size_t kLeafSize = 8;
 
-
-/*
- * Helper Inliners
- */
-
-static inline bool node_insersect(const AABB& box, const Camera& cam) {
-    const auto& view = cam.get_camera_meters().view;
-    return !(box.max[0] < view.min[0] || view.max[0] < box.min[0] ||
-             box.max[1] < view.min[1] || view.max[1] < box.min[1]);
-}
-
-static inline AABB unite(const AABB& a, const AABB& b) {
-    AABB r;
-    r.min[0] = std::min(a.min[0], b.min[0]);
-    r.min[1] = std::min(a.min[1], b.min[1]);
-    r.max[0] = std::max(a.max[0], b.max[0]);
-    r.max[1] = std::max(a.max[1], b.max[1]);
-    return r;
-}
+std::vector<PropRef> prop_refs;
 
 static inline std::size_t aligned_stride(std::size_t coordCount) noexcept {
     const std::size_t align = alignof(Props);
@@ -38,141 +22,191 @@ static inline std::size_t aligned_stride(std::size_t coordCount) noexcept {
     return (bytes + (align - 1)) & ~(align - 1);
 }
 
+static inline PropRef make_prop_ref(const Props* prop) {
+    PropRef ref{};
+    ref.props = prop;
+
+    if (!prop || prop->coords_count <= 0) {
+        ref.box.min[0] = ref.box.min[1] = 0.0;
+        ref.box.max[0] = ref.box.max[1] = -0.0;
+        return ref;
+    }
+
+    double minx = +std::numeric_limits<double>::infinity();
+    double miny = +std::numeric_limits<double>::infinity();
+    double maxx = -std::numeric_limits<double>::infinity();
+    double maxy = -std::numeric_limits<double>::infinity();
+
+    const Vertex* verts = prop->coords;
+    const int count = prop->coords_count;
+    for (int i = 0; i < count; ++i) {
+        const double x = verts[i].x;
+        const double y = verts[i].y;
+        if (!std::isfinite(x) || !std::isfinite(y)) continue;
+        if (x < minx) minx = x;
+        if (y < miny) miny = y;
+        if (x > maxx) maxx = x;
+        if (y > maxy) maxy = y;
+    }
+
+    if (minx <= maxx && miny <= maxy) {
+        ref.box.min[0] = minx;
+        ref.box.min[1] = miny;
+        ref.box.max[0] = maxx;
+        ref.box.max[1] = maxy;
+    } else {
+        ref.box.min[0] = ref.box.min[1] = 0.0;
+        ref.box.max[0] = ref.box.max[1] = -0.0;
+    }
+
+    return ref;
+}
+
+static inline AABB range_bounds(PropRef* begin, PropRef* end) {
+    AABB result;
+    bool initialized = false;
+
+    for (PropRef* it = begin; it != end; ++it) {
+        if (!it->box.valid()) continue;
+        if (!initialized) {
+            result = it->box;
+            initialized = true;
+        } else {
+            result = AABB::unite(result, it->box);
+        }
+    }
+
+    if (!initialized) {
+        result.min[0] = result.min[1] = 0.0;
+        result.max[0] = result.max[1] = -0.0;
+    }
+
+    return result;
+}
+
+static inline double centroid(const AABB& box, int axis) {
+    return 0.5 * (box.min[axis] + box.max[axis]);
+}
+
+static Node* build_recursive(PropRef* begin, PropRef* end) {
+    Node& node = all_nodes.emplace_back();
+    node.left = nullptr;
+    node.right = nullptr;
+    node.prop_begin = begin;
+    node.prop_end = end;
+
+    const std::size_t count = static_cast<std::size_t>(end - begin);
+    if (count == 0) {
+        node.box.min[0] = node.box.min[1] = 0.0;
+        node.box.max[0] = node.box.max[1] = -0.0;
+        return &node;
+    }
+
+    node.box = range_bounds(begin, end);
+    if (count <= kLeafSize) {
+        return &node;
+    }
+
+    double min_c[2] = { +std::numeric_limits<double>::infinity(), +std::numeric_limits<double>::infinity() };
+    double max_c[2] = { -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity() };
+
+    for (PropRef* it = begin; it != end; ++it) {
+        if (!it->box.valid()) continue;
+
+        const double cx = centroid(it->box, 0);
+        const double cy = centroid(it->box, 1);
+
+        if (cx < min_c[0]) min_c[0] = cx;
+        if (cy < min_c[1]) min_c[1] = cy;
+        if (cx > max_c[0]) max_c[0] = cx;
+        if (cy > max_c[1]) max_c[1] = cy;
+    }
+
+    const double extent_x = max_c[0] - min_c[0];
+    const double extent_y = max_c[1] - min_c[1];
+    const int axis = (extent_x >= extent_y) ? 0 : 1;
+
+    PropRef* mid = begin + (count / 2);
+    std::nth_element(begin, mid, end, [axis](const PropRef& a, const PropRef& b) {
+        return centroid(a.box, axis) < centroid(b.box, axis);
+    });
+
+    node.left = build_recursive(begin, mid);
+    node.right = build_recursive(mid, end);
+    node.box = AABB::unite(node.left->box, node.right->box);
+    return &node;
+}
+
 } // namespace
 
-// Assumes: `states.props` stores `states.prop_count` packed Props records
-// with vertex coordinates, and a global `std::vector<Node> all_nodes;`
-
 void Node::build_tree(int threads) {
-    const std::size_t N = static_cast<std::size_t>(states.prop_count);
+    (void)threads;
 
-    if (N == 0 || !states.props || props_data_bytes == 0) {
-        all_nodes.clear();
-        prop_boxes.clear();
+    const std::size_t prop_count = static_cast<std::size_t>(states.prop_count);
+
+    all_nodes.clear();
+    prop_refs.clear();
+
+    if (prop_count == 0 || !states.props || props_data_bytes == 0) {
         return;
     }
 
-    prop_boxes.clear();
-    prop_boxes.reserve(N);
+    prop_refs.reserve(prop_count);
+    all_nodes.reserve(std::max<std::size_t>(1, 2 * prop_count));
 
     const unsigned char* cursor = reinterpret_cast<const unsigned char*>(states.props);
     const unsigned char* const end = cursor + props_data_bytes;
-    for (std::size_t i = 0; i < N; ++i) {
+
+    for (std::size_t i = 0; i < prop_count; ++i) {
         const Props* prop = reinterpret_cast<const Props*>(cursor);
-        AABB box;
+        prop_refs.push_back(make_prop_ref(prop));
 
-        if (!prop || prop->coords_count <= 0) {
-            box.min[0] = box.min[1] = 0.0;
-            box.max[0] = box.max[1] = -0.0;
-        } else {
-            double minx = +std::numeric_limits<double>::infinity();
-            double miny = +std::numeric_limits<double>::infinity();
-            double maxx = -std::numeric_limits<double>::infinity();
-            double maxy = -std::numeric_limits<double>::infinity();
-
-            const Vertex* verts = prop->coords;
-            const int count = prop->coords_count;
-            for (int v = 0; v < count; ++v) {
-                const double x = verts[v].x;
-                const double y = verts[v].y;
-                if (!std::isfinite(x) || !std::isfinite(y)) continue;
-                if (x < minx) minx = x;
-                if (y < miny) miny = y;
-                if (x > maxx) maxx = x;
-                if (y > maxy) maxy = y;
-            }
-
-            if (minx > maxx || miny > maxy) {
-                box.min[0] = box.min[1] = 0.0;
-                box.max[0] = box.max[1] = -0.0;
-            } else {
-                box.min[0] = minx;
-                box.min[1] = miny;
-                box.max[0] = maxx;
-                box.max[1] = maxy;
-            }
-        }
-
-        prop_boxes.push_back(box);
-        const int rawCount = prop ? prop->coords_count : 0;
-        const std::size_t coordsCount = rawCount > 0 ? static_cast<std::size_t>(rawCount) : 0;
-        cursor += aligned_stride(coordsCount);
+        const std::size_t coords_count = (prop && prop->coords_count > 0)
+            ? static_cast<std::size_t>(prop->coords_count)
+            : 0;
+        cursor += aligned_stride(coords_count);
         if (cursor > end) {
             std::fprintf(stderr, "node traversal exceeded props buffer (prop %zu)\n", i);
             all_nodes.clear();
-            prop_boxes.clear();
+            prop_refs.clear();
             return;
         }
     }
 
     if (cursor != end) {
-        std::fprintf(stderr, "node traversal ended at %zu bytes, expected %zu\n",
-                     static_cast<size_t>(cursor - reinterpret_cast<const unsigned char*>(states.props)),
-                     props_data_bytes);
+        std::fprintf(stderr,
+            "node traversal ended at %zu bytes, expected %zu\n",
+            static_cast<size_t>(cursor - reinterpret_cast<const unsigned char*>(states.props)),
+            props_data_bytes
+        );
+
         all_nodes.clear();
-        prop_boxes.clear();
+        prop_refs.clear();
         return;
     }
 
-    AABB* const P = prop_boxes.data();
-
-    const std::size_t L = std::size_t(1) << DEPTH_LIMIT;
-    all_nodes.assign(2 * L, Node{});
-
-    const std::size_t chunk = (N + L - 1) / L;
-
-    #pragma omp parallel for schedule(static) num_threads(threads)
-    for (std::ptrdiff_t leaf = 0; leaf < (std::ptrdiff_t)L; ++leaf) {
-        const std::size_t b = std::min(N, std::size_t(leaf) * chunk);
-        const std::size_t e = std::min(N, b + chunk);
-        all_nodes[L + leaf] = Node(P + b, P + e, threads);
+    if (prop_refs.empty()) {
+        return;
     }
 
-    for (std::size_t level = L / 2; ; level >>= 1) {
-        const std::size_t first = level;
-        const std::size_t last  = 2 * level - 1;
+    build_recursive(prop_refs.data(), prop_refs.data() + prop_refs.size());
+}
 
-        #pragma omp parallel for schedule(static) num_threads(threads)
-        for (std::ptrdiff_t i = (std::ptrdiff_t)first; i <= (std::ptrdiff_t)last; ++i) {
-            Node& parent    = all_nodes[i];
-            Node& leftNode  = all_nodes[2 * std::size_t(i)];
-            Node& rightNode = all_nodes[2 * std::size_t(i) + 1];
+void Node::collect_visible(const CameraMeters& view, std::vector<const Props*>& out) const {
+    if (!box.valid() || !box.overlaps(view.view)) {
+        return;
+    }
 
-            parent.child_begin = &leftNode;
-            parent.child_end   = parent.child_begin + 2;
-            parent.prop_begin  = leftNode.prop_begin;
-            parent.prop_end    = rightNode.prop_end;
-            parent.box         = unite(leftNode.box, rightNode.box);
+    if (!left && !right) {
+        for (PropRef* it = prop_begin; it != prop_end; ++it) {
+            if (!it->box.valid()) continue;
+            if (it->box.overlaps(view.view)) {
+                out.push_back(it->props);
+            }
         }
-
-        if (level == 1) break;
+        return;
     }
-}
 
-void Node::nodes_intersect(const Camera& cam, Node*& node) {
-    memset(node, 0, sizeof(node[0]) * states.prop_count);
-}
-
-Node::Node(AABB* begin, AABB* end, int threads) {
-    child_begin = child_end = nullptr;
-    prop_begin = begin; prop_end = end;
-
-    const ptrdiff_t N = end - begin;
-    if (N <= 0) { box.min[0]=box.min[1]=0.0; box.max[0]=box.max[1]=-0.0; return; }
-
-    double minx=+std::numeric_limits<double>::infinity();
-    double miny=+std::numeric_limits<double>::infinity();
-    double maxx=-std::numeric_limits<double>::infinity();
-    double maxy=-std::numeric_limits<double>::infinity();
-
-    #pragma omp parallel for num_threads(threads) schedule(static) \
-        reduction(min:minx,miny) reduction(max:maxx,maxy)
-    for (ptrdiff_t i=0;i<N;++i) {
-        const AABB& b = begin[i];
-        if (b.min[0] < minx) minx = b.min[0];
-        if (b.min[1] < miny) miny = b.min[1];
-        if (b.max[0] > maxx) maxx = b.max[0];
-        if (b.max[1] > maxy) maxy = b.max[1];
-    }
-    box.min[0]=minx; box.min[1]=miny; box.max[0]=maxx; box.max[1]=maxy;
+    if (left) left->collect_visible(view, out);
+    if (right) right->collect_visible(view, out);
 }

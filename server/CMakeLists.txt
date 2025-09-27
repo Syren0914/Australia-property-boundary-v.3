@@ -36,7 +36,7 @@ else()
 endif()
 
 # Add the test executable
-add_executable(my_test tests/test.cpp)
+add_executable(my_test tests/test.cpp src/node.cpp)
 
 # Include directories for the test target
 target_include_directories(my_test PRIVATE ${PROJECT_SOURCE_DIR}/include)

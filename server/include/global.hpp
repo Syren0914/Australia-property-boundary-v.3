@@ -23,4 +23,4 @@ struct States {
 
 extern States states;
 extern std::size_t props_data_bytes;
-static std::vector<Node> all_nodes;
+extern std::vector<Node> all_nodes;
