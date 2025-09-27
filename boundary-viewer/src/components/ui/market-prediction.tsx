@@ -804,3 +804,4 @@ export const MarketPrediction: React.FC<MarketPredictionProps> = ({
     </EnhancedCard>
   );
 };
+

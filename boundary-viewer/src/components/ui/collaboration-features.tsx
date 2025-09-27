@@ -509,3 +509,4 @@ export const CollaborationFeatures: React.FC<CollaborationProps> = ({
     </EnhancedCard>
   );
 };
+

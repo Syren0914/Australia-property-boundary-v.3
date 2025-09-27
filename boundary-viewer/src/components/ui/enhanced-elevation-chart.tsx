@@ -556,3 +556,4 @@ export const EnhancedElevationChart: React.FC<EnhancedElevationChartProps> = ({
     </div>
   );
 };
+

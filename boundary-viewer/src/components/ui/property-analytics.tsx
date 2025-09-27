@@ -381,3 +381,4 @@ export const PropertyAnalytics: React.FC<PropertyAnalyticsProps> = ({
     </EnhancedCard>
   );
 };
+

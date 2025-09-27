@@ -18,7 +18,8 @@ import {
   Zap,
   Brain,
   Sparkles,
-  DollarSign
+  DollarSign,
+  Layers
 } from 'lucide-react';
 import { EnhancedButton } from './enhanced-button';
 import { EnhancedCard } from './enhanced-card';
@@ -62,6 +63,8 @@ interface ModernSidebarProps {
   setSelectedProperty: (property: any) => void;
   showPropertyValues: boolean;
   togglePropertyValues: () => void;
+  parcelSelected: boolean;
+  setShowFloorplanModal: (show: boolean) => void;
 }
 
 export const ModernSidebar: React.FC<ModernSidebarProps> = ({
@@ -95,7 +98,9 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
   selectedProperty,
   setSelectedProperty,
   showPropertyValues,
-  togglePropertyValues
+  togglePropertyValues,
+  parcelSelected,
+  setShowFloorplanModal
 }) => {
   const [isMobile, setIsMobile] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
@@ -350,6 +355,22 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
               {elevationToolActive ? 'Active' : 'Elevation'}
             </EnhancedButton>
 
+            {/* Floorplan 3D Button (show only when a parcel is selected) */}
+            {/* {parcelSelected && (
+              <EnhancedButton
+                onClick={() => setShowFloorplanModal(true)}
+                variant={"secondary"}
+                size="md"
+                icon={Layers}
+                style={{
+                  borderRadius: '24px',
+                  minWidth: '140px',
+                }}
+              >
+                Floorplan 3D
+              </EnhancedButton>
+            )} */}
+
             {/* AI Dashboard Button */}
             {/* <EnhancedButton
               onClick={() => {
@@ -480,6 +501,21 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
                 {elevationToolActive ? 'Deactivate' : 'Activate'} Elevation Tool
               </EnhancedButton>
               
+              {parcelSelected && (
+                <EnhancedButton
+                  onClick={() => {
+                    setShowFloorplanModal(true);
+                    setShowMobileMenu(false);
+                  }}
+                  variant={"secondary"}
+                  size="md"
+                  icon={Layers}
+                  fullWidth
+                >
+                  Floorplan 3D
+                </EnhancedButton>
+              )}
+
               <EnhancedButton
                 onClick={() => {
                   setSelectedProperty({
@@ -774,7 +810,7 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
             )}
 
             {/* General Instructions */}
-            {!elevationToolActive && (
+            {/* {!elevationToolActive && (
               <EnhancedCard
                 title="How to Use"
                 subtitle="Interactive property boundary viewer"
@@ -793,7 +829,7 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
                   </p>
                 </div>
               </EnhancedCard>
-            )}
+            )} */}
           </div>
         </div>
       )}

@@ -138,3 +138,4 @@ const properties = estimator.generatePropertyDataForArea(
 - **Government Data**: Visit data.gov.au
 
 The Property Value Estimator provides a great foundation and realistic data for development. When you're ready for production, you can easily integrate real APIs for even more accurate property values!
+

@@ -576,3 +576,4 @@ export const AIPropertyAnalysis: React.FC<AIPropertyAnalysisProps> = ({
     </EnhancedCard>
   );
 };
+

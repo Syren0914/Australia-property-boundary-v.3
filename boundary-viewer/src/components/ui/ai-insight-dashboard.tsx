@@ -472,3 +472,4 @@ export const AIInsightDashboard: React.FC<AIInsightDashboardProps> = ({
     </div>
   );
 };
+
