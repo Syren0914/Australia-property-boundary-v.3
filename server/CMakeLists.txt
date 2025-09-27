@@ -23,6 +23,14 @@ endif()
 find_package(GDAL REQUIRED)
 target_link_libraries(boundary PRIVATE GDAL::GDAL)
 
+set(ASSETS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/assets)
+set(ASSETS_OUT ${CMAKE_CURRENT_BINARY_DIR}/assets)
+
+add_custom_target(copy_assets ALL
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${ASSETS_DIR} ${ASSETS_OUT}
+  COMMENT "Copying assets to build directory"
+)
+
 # Add the test executable
 add_executable(my_test tests/test.cpp)
 
