@@ -10,4 +10,5 @@ public/property_boundaries.pmtiles
 tippecanoe/
 doc/build/
 server/build/
+server/resources/*.pmtiles
 .env
