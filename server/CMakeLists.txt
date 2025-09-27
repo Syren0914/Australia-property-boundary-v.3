@@ -20,6 +20,9 @@ else()
   message(WARNING "OpenMP not found; building without OpenMP")
 endif()
 
+find_package(GDAL REQUIRED)
+target_link_libraries(boundary PRIVATE GDAL::GDAL)
+
 # Add the test executable
 #add_executable(my_test tests/test.cpp)
 
