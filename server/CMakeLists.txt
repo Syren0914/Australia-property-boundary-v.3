@@ -11,7 +11,7 @@ project(boundary)
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
 # Add the main executable
-add_executable(boundary src/main.cpp)
+add_executable(boundary src/main.cpp src/reader.cpp src/node.cpp)
 
 find_package(OpenMP)
 if(OpenMP_CXX_FOUND)

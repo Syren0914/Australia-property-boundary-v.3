@@ -18,7 +18,7 @@ static inline AABB unite(const AABB& a, const AABB& b) {
 // Assumes: `states.props` (AABB*), `states.prop_count` (size_t),
 // and a global `std::vector<Node> all_nodes;`
 
-static void Node::build_tree(int threads) {
+void Node::build_tree(int threads) {
     const std::size_t N = states.prop_count;
     AABB* const P       = states.props;
 
