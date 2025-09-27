@@ -1,3 +1,6 @@
+/* Import enhanced UI styles first */
+@import './styles/enhanced-ui.css';
+
 @tailwind base;
 
 @custom-variant dark (&:is(.dark *));

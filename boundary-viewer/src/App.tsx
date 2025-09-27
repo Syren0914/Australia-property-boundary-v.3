@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { Protocol } from 'pmtiles';
 import * as turf from '@turf/turf';
-import { ElevationChart } from './ElevationChart';
-import { ModernSidebar } from './components/ui/sidebar';
+import { EnhancedElevationChart } from './components/ui/enhanced-elevation-chart';
+import { ModernSidebar } from './components/ui/enhanced-sidebar';
+import { AIInsightDashboard } from './components/ui/ai-insight-dashboard';
 import { SubscriptionProvider, useSubscription } from './contexts/SubscriptionContext';
 import { SubscriptionModal } from './components/SubscriptionModal';
 import { Analytics } from '@vercel/analytics/react';
+import { usePropertyValueEstimator } from './services/property-value-estimator';
 
 // Mobile detection hook
 const useMobileDetection = () => {
@@ -124,6 +126,7 @@ function AppContent() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const isMobile = useMobileDetection();
+  const { generateSampleData, estimateSingleProperty } = usePropertyValueEstimator();
   
   // Refs to track current state values for event handlers
   const elevationToolActiveRef = useRef(false);
@@ -144,8 +147,37 @@ function AppContent() {
   const [elevationData, setElevationData] = useState<{ distances: number[]; elevations: number[] } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  
-  
+  // AI Dashboard state
+  const [showAIDashboard, setShowAIDashboard] = useState(false);
+  const [selectedProperty, setSelectedProperty] = useState<any>(null);
+
+  // Property value overlay state
+  const [showPropertyValues, setShowPropertyValues] = useState(false);
+  const [propertyValueData, setPropertyValueData] = useState<any[]>([]);
+
+  // Generate property value data for overlay
+  const generatePropertyValueData = () => {
+    // Use the property value estimator to generate realistic data
+    const estimatedProperties = generateSampleData(mapCenter);
+    setPropertyValueData(estimatedProperties);
+  };
+
+  // Toggle property value visibility
+  const togglePropertyValues = () => {
+    setShowPropertyValues(!showPropertyValues);
+    if (mapRef.current) {
+      const map = mapRef.current;
+      const labelsLayer = map.getLayer('property-value-labels');
+      const circlesLayer = map.getLayer('property-value-circles');
+      
+      if (labelsLayer && circlesLayer) {
+        const visibility = !showPropertyValues ? 'visible' : 'none';
+        map.setLayoutProperty('property-value-labels', 'visibility', visibility);
+        map.setLayoutProperty('property-value-circles', 'visibility', visibility);
+      }
+    }
+  };
+
   // Pinpoint marker state
   const [selectedLocation, setSelectedLocation] = useState<{ center: [number, number]; place_name: string } | null>(null);
 
@@ -323,6 +355,128 @@ function AppContent() {
         return !isMobile; // Always add on desktop
       };
 
+      // Function to add property value labels
+      const addPropertyValueLabels = () => {
+        if (!map.getSource('property-values')) {
+          // Generate property value data
+          generatePropertyValueData();
+          
+          // Create GeoJSON data for property value labels
+          const propertyValueFeatures = propertyValueData.map(property => ({
+            type: 'Feature' as const,
+            geometry: {
+              type: 'Point' as const,
+              coordinates: property.center
+            },
+            properties: {
+              id: property.id,
+              value: property.value,
+              area: property.area,
+              type: property.type,
+              formattedValue: `$${(property.value / 1000).toFixed(0)}k`
+            }
+          }));
+
+          map.addSource('property-values', {
+            type: 'geojson',
+            data: {
+              type: 'FeatureCollection',
+              features: propertyValueFeatures
+            }
+          });
+
+          // Add property value labels layer
+          map.addLayer({
+            id: 'property-value-labels',
+            type: 'symbol',
+            source: 'property-values',
+            minzoom: 12, // Only show at higher zoom levels
+            layout: {
+              'text-field': ['get', 'formattedValue'],
+              'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+              'text-size': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                12, 10,
+                16, 14,
+                20, 18
+              ],
+              'text-offset': [0, 0],
+              'text-anchor': 'center',
+              'text-allow-overlap': false,
+              'text-ignore-placement': false
+            },
+            paint: {
+              'text-color': '#ffffff',
+              'text-halo-color': '#000000',
+              'text-halo-width': 2,
+              'text-halo-blur': 1
+            }
+          });
+
+          // Add property value background circles
+          map.addLayer({
+            id: 'property-value-circles',
+            type: 'circle',
+            source: 'property-values',
+            minzoom: 12,
+            paint: {
+              'circle-radius': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                12, 8,
+                16, 12,
+                20, 16
+              ],
+              'circle-color': [
+                'case',
+                ['==', ['get', 'type'], 'commercial'], '#ff6b35',
+                ['==', ['get', 'type'], 'residential'], '#4ecdc4',
+                '#95a5a6'
+              ],
+              'circle-opacity': 0.8,
+              'circle-stroke-color': '#ffffff',
+              'circle-stroke-width': 2,
+              'circle-stroke-opacity': 1
+            }
+          });
+
+          // Set initial visibility
+          if (!showPropertyValues) {
+            map.setLayoutProperty('property-value-labels', 'visibility', 'none');
+            map.setLayoutProperty('property-value-circles', 'visibility', 'none');
+          }
+
+          // Add click handler for property value labels
+          map.on('click', 'property-value-labels', (e) => {
+            const feature = e.features?.[0];
+            if (feature && feature.geometry.type === 'Point') {
+              const properties = feature.properties;
+              const coordinates = (feature.geometry as any).coordinates;
+              setSelectedProperty({
+                id: properties?.id,
+                value: properties?.value,
+                area: properties?.area,
+                type: properties?.type,
+                center: coordinates
+              });
+              setShowAIDashboard(true);
+            }
+          });
+
+          // Add hover effects
+          map.on('mouseenter', 'property-value-labels', () => {
+            map.getCanvas().style.cursor = 'pointer';
+          });
+
+          map.on('mouseleave', 'property-value-labels', () => {
+            map.getCanvas().style.cursor = '';
+          });
+        }
+      };
+
       // Function to add property boundaries with mobile optimizations
       const addPropertyBoundaries = () => {
         if (!map.getSource(sourceId)) {
@@ -383,6 +537,9 @@ function AppContent() {
              }
              
              map.addLayer(outlineLayerConfig);
+
+            // Add property value labels layer
+            addPropertyValueLabels();
 
             console.log('PMTiles loaded with mobile optimizations!');
           } catch (error) {
@@ -778,14 +935,74 @@ function AppContent() {
         canPerformAction={canPerformAction}
         setShowSubscriptionModal={setShowSubscriptionModal}
         incrementElevationProfile={incrementElevationProfile}
-        
+        showAIDashboard={showAIDashboard}
+        setShowAIDashboard={setShowAIDashboard}
+        selectedProperty={selectedProperty}
+        setSelectedProperty={setSelectedProperty}
+        showPropertyValues={showPropertyValues}
+        togglePropertyValues={togglePropertyValues}
       />
       
-      <ElevationChart
+      <EnhancedElevationChart
         isVisible={showElevationChart}
         onClose={() => setShowElevationChart(false)}
         elevationData={elevationData}
       />
+
+      {/* AI Insight Dashboard */}
+      {showAIDashboard && (
+        <div style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          zIndex: 1000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px',
+        }}>
+          <div style={{
+            width: '90%',
+            height: '90%',
+            backgroundColor: 'white',
+            borderRadius: '16px',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+            overflow: 'hidden',
+            position: 'relative',
+          }}>
+            <AIInsightDashboard
+              selectedProperty={selectedProperty}
+              elevationData={elevationData || undefined}
+              mapCenter={mapCenter}
+            />
+            <button
+              onClick={() => setShowAIDashboard(false)}
+              style={{
+                position: 'absolute',
+                top: '16px',
+                right: '16px',
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                backgroundColor: '#f3f4f6',
+                border: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                fontSize: '18px',
+                color: '#6b7280',
+                zIndex: 1001,
+              }}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Subscription Components */}
       <SubscriptionModal
