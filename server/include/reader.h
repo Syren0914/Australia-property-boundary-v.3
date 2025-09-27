@@ -1,11 +1,7 @@
 #pragma once
+#include <vector>
+#include <string>
+#include <mutex>
+#include "AABB.hpp"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-void init_reader(int N, const char** filenames);
-
-#ifdef __cplusplus
-}
-#endif
+void init_reader_meters(int N, const char** files, int threads);

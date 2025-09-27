@@ -6,9 +6,9 @@
 
 struct States {
 	int prop_count;
-	AABB props[];
+	AABB* props;
 };
 
 
-static States states;
+extern States states;
 static std::vector<Node> all_nodes;
