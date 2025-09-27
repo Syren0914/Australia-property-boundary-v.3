@@ -22,7 +22,10 @@ States states{0, nullptr};
 static std::size_t count_features(const char* path) {
     GDALDataset* ds = static_cast<GDALDataset*>(
         GDALOpenEx(path, GDAL_OF_READONLY | GDAL_OF_VECTOR, nullptr, nullptr, nullptr));
-    if (!ds) { std::fprintf(stderr, "open failed: %s\n", path); return 0; }
+    if (!ds) {
+        std::fprintf(stderr, "open failed: %s\n", path);
+        return 0;
+    }
 
     std::size_t total = 0;
     const int layers = ds->GetLayerCount();
@@ -110,7 +113,7 @@ static std::size_t fill_aabbs_meters(const char* path, const char* targetEPSG,
     return written;
 }
 
-void init_reader_meters(int N, const char** files, int threads) {
+void init_reader_meters(int N, const char** files, int threads = 4) {
     GDALAllRegister();
 
     std::vector<std::size_t> counts(N, 0);
