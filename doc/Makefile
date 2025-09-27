@@ -1,5 +1,5 @@
 SRC=main
-TARGET=slb-ttc-doc-v1.2
+TARGET=prop-boundary-doc-v1.0
 
 ifndef BUILD_DIR
 	BUILD_DIR=build
