@@ -26,7 +26,66 @@ const useMobileDetection = () => {
   return isMobile;
 };
 
-const API_BASE = import.meta.env.VITE_BVH_API ?? 'http://localhost:8080';
+const API_BASE = import.meta.env.VITE_BVH_API ?? 'http://localhost:9090';
+const WS_PATH = '/ws/camera';
+
+type CameraPayload = {
+  mode: 'THREE_D' | 'TWO_D';
+  zoom: number;
+  center: { lng: number; lat: number };
+  bounds: { west: number; south: number; east: number; north: number };
+  metersPerPixel: number;
+  pitch: number;
+  bearing: number;
+};
+
+function toWebSocketUrl(base: string): string {
+  try {
+    const url = new URL(base);
+    url.pathname = WS_PATH;
+    url.search = '';
+    url.hash = '';
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    return url.toString();
+  } catch {
+    if (base.startsWith('https://')) return `wss://${base.slice(8)}${WS_PATH}`;
+    if (base.startsWith('http://')) return `ws://${base.slice(7)}${WS_PATH}`;
+    return `${base}${WS_PATH}`;
+  }
+}
+
+function throttle<T extends (...args: any[]) => void>(fn: T, wait: number) {
+  let lastTime = 0;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  let pendingArgs: Parameters<T> | null = null;
+
+  const invoke = (args: Parameters<T>) => {
+    lastTime = Date.now();
+    timeout = null;
+    fn(...args);
+  };
+
+  return (...args: Parameters<T>) => {
+    const now = Date.now();
+    const remaining = wait - (now - lastTime);
+    pendingArgs = args;
+
+    if (remaining <= 0 || remaining > wait) {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      invoke(args);
+    } else if (!timeout) {
+      timeout = setTimeout(() => {
+        if (pendingArgs) {
+          invoke(pendingArgs);
+          pendingArgs = null;
+        }
+      }, remaining);
+    }
+  };
+}
 
 // DEV: hits Vite proxy → ArcGIS directly
 async function getElevationsMultiDev(pointsLngLat: [number, number][]) {
@@ -125,6 +184,7 @@ function movingAverage(arr: number[], w: number) {
 function AppContent() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   const isMobile = useMobileDetection();
   
   // Refs to track current state values for event handlers
@@ -270,16 +330,51 @@ function AppContent() {
       }, 100);
     }
 
-    // Track map center for search proximity
-    const sendCameraState = async (mapInstance: maplibregl.Map) => {
+    const websocketUrl = toWebSocketUrl(API_BASE);
+
+    const connectWebSocket = () => {
+      const active = wsRef.current;
+      if (active && (active.readyState === WebSocket.OPEN || active.readyState === WebSocket.CONNECTING)) {
+        return active;
+      }
+
+      try {
+        const socket = new WebSocket(websocketUrl);
+        socket.onopen = () => console.log('Camera WebSocket connected');
+        socket.onclose = (event) => {
+          console.log('Camera WebSocket closed', event.code, event.reason);
+          wsRef.current = null;
+        };
+        socket.onerror = (event) => {
+          console.error('Camera WebSocket error', event);
+        };
+        socket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            console.debug('Camera state ack:', data);
+          } catch {
+            console.debug('Camera state ack (raw):', event.data);
+          }
+        };
+        wsRef.current = socket;
+        return socket;
+      } catch (err) {
+        console.error('Failed to open camera WebSocket', err);
+        wsRef.current = null;
+        return null;
+      }
+    };
+
+    connectWebSocket();
+
+    const buildCameraPayload = (mapInstance: maplibregl.Map): CameraPayload => {
       const bounds = mapInstance.getBounds();
       const center = mapInstance.getCenter();
       const zoom = mapInstance.getZoom();
       const pitch = mapInstance.getPitch();
-
       const metersPerPixel = 156543.03392 * Math.cos(center.lat * Math.PI / 180) / Math.pow(2, zoom);
 
-      const payload = {
+      return {
         mode: pitch > 0 ? 'THREE_D' : 'TWO_D',
         zoom,
         center: { lng: center.lng, lat: center.lat },
@@ -293,7 +388,9 @@ function AppContent() {
         pitch,
         bearing: mapInstance.getBearing(),
       };
+    };
 
+    const postCameraState = async (payload: CameraPayload) => {
       try {
         const response = await fetch(`${API_BASE}/api/camera-state`, {
           method: 'POST',
@@ -305,20 +402,48 @@ function AppContent() {
           throw new Error(`Camera update failed: ${response.status}`);
         }
 
-        return await response.json();
+        const data = await response.json();
+        console.debug('Camera state ack:', data);
+        return true;
       } catch (err) {
         console.error('Failed to push camera state to backend', err);
-        return null;
+        return false;
       }
     };
+
+    const pushCameraPayload = (payload: CameraPayload): boolean => {
+      const socket = wsRef.current;
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify(payload));
+        return true;
+      }
+
+      if (!socket || socket.readyState === WebSocket.CLOSED) {
+        connectWebSocket();
+      }
+
+      return false;
+    };
+
+    const sendCameraStateThrottled = throttle((mapInstance: maplibregl.Map) => {
+      const payload = buildCameraPayload(mapInstance);
+      if (!pushCameraPayload(payload)) {
+        void postCameraState(payload);
+      }
+    }, 100);
+
+    map.on('move', () => {
+      sendCameraStateThrottled(map);
+    });
 
     map.on('moveend', async () => {
       const center = map.getCenter();
       setMapCenter([center.lng, center.lat]);
 
-      const result = await sendCameraState(map);
-      if (result) {
-        console.debug('Camera state ack:', result);
+      const payload = buildCameraPayload(map);
+      const sent = pushCameraPayload(payload);
+      if (!sent) {
+        await postCameraState(payload);
       }
     });
 
@@ -663,6 +788,14 @@ function AppContent() {
     return () => {
       if (map) {
         map.remove();
+      }
+      if (wsRef.current) {
+        try {
+          wsRef.current.close();
+        } catch (err) {
+          console.error('Error closing camera WebSocket', err);
+        }
+        wsRef.current = null;
       }
       maplibregl.removeProtocol('pmtiles');
     };

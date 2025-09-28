@@ -1,5 +1,9 @@
 #include <cam.hpp>
 
+CameraMeters last_camera_meters{};
+CameraMode last_camera_mode = CameraMode::THREE_D;
+std::mutex camera_state_mutex;
+
 Camera::Camera() {
 
     /* Stuff with camera meters */

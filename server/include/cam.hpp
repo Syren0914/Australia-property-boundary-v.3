@@ -1,6 +1,7 @@
 #pragma once
 
 #include <AABB.hpp>
+#include <mutex>
 
 enum class CameraMode {
     TWO_D,
@@ -29,4 +30,5 @@ class Camera {
 };
 
 extern CameraMeters last_camera_meters;
-
+extern CameraMode last_camera_mode;
+extern std::mutex camera_state_mutex;
