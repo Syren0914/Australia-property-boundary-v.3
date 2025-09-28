@@ -49,7 +49,21 @@ async function getElevationsMultiDev(pointsLngLat: [number, number][]) {
   return data.samples.map((s: any) => Number(s.value));
 }
 
-// PROD: hits your Supabase edge function (POST)
+// Google Elevation API (preferred when key is configured)
+async function getElevationsGoogle(pointsLngLat: [number, number][], chunk = 200) {
+  // Call our serverless proxy to avoid CORS and hide key
+  const resp = await fetch('/api/elevation', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ points: pointsLngLat })
+  });
+  const data = await resp.json();
+  if (!resp.ok || data.error) throw new Error(data.error || 'elevation_failed');
+  if (!Array.isArray(data.elevations)) throw new Error('bad_elevation_response');
+  return data.elevations.map((n: any) => Number(n));
+}
+
+// PROD: hits your Supabase edge function (POST) — fallback when Google key not available
 async function getElevationsMultiProd(pointsLngLat: [number, number][]) {
   const url = import.meta.env.VITE_SUPABASE_FUNC_URL as string;
   if (!url) throw new Error("Missing VITE_SUPABASE_FUNC_URL env");
@@ -68,11 +82,13 @@ async function getElevationsMultiProd(pointsLngLat: [number, number][]) {
   if (!data?.samples) throw new Error("No samples (prod)");
   return data.samples.map((s: any) => Number(s.value));
 }
-// Dispatcher
+// Dispatcher — prefer Google if key exists
 async function getElevationsMulti(points: [number, number][]) {
+  const hasGoogle = Boolean(import.meta.env.VITE_GOOGLE_MAPS_KEY);
+  if (hasGoogle) return getElevationsGoogle(points);
   return import.meta.env.DEV
-    ? getElevationsMultiDev(points)   // Vite proxy → ArcGIS (local dev)
-    : getElevationsMultiProd(points); // Supabase function (prod)
+    ? getElevationsMultiDev(points)
+    : getElevationsMultiProd(points);
 }
 
 // Public API: build a profile every N meters (default 5 m), batched

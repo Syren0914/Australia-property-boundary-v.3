@@ -65,11 +65,9 @@ export const EnhancedElevationChart: React.FC<EnhancedElevationChartProps> = ({
   const [viewMode, setViewMode] = useState<ViewMode>('normal');
   const [showStatistics, setShowStatistics] = useState(true);
 
-  if (!isVisible || !elevationData) {
-    return null;
-  }
-
-  const { distances, elevations } = elevationData;
+  // Always initialize hooks with safe data to keep hook order stable
+  const distances = elevationData?.distances ?? [];
+  const elevations = elevationData?.elevations ?? [];
 
   // Enhanced statistics calculation
   const statistics = useMemo(() => {
@@ -311,6 +309,10 @@ export const EnhancedElevationChart: React.FC<EnhancedElevationChartProps> = ({
     overflowY: 'auto' as const,
     boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
   };
+
+  if (!isVisible || distances.length === 0 || elevations.length === 0) {
+    return null;
+  }
 
   return (
     <div style={containerStyle}>
