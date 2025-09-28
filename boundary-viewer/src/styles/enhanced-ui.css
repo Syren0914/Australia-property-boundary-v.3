@@ -185,6 +185,25 @@
   pointer-events: none;
 }
 
+/* Hide native scrollbars while preserving scroll */
+.hide-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE 10+ */
+}
+.hide-scrollbar::-webkit-scrollbar { /* Chrome/Safari */
+  width: 0px;
+  height: 0px;
+  background: transparent;
+}
+
+/* Keep UI light regardless of map theme */
+:root {
+  --card-bg: #ffffff;
+  --card-border: #e5e7eb;
+  --card-text: #111827;
+  --muted-text: #6b7280;
+}
+
 /* Mobile Optimizations */
 @media (max-width: 768px) {
   .enhanced-button {

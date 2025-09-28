@@ -137,7 +137,9 @@ function AppContent() {
   const isDrawingRef = useRef(false);
   const elevationPointsRef = useRef<[number, number][]>([]);
 
-  const [style, setStyle] = useState('default');
+  const [style, setStyle] = useState(() => {
+    try { return localStorage.getItem('mapTheme') || 'default'; } catch { return 'default'; }
+  });
   const [mapCenter, setMapCenter] = useState<[number, number]>([153.026, -27.4705]);
   
   // Sidebar state
@@ -165,6 +167,9 @@ function AppContent() {
   const [selectedParcelForecast, setSelectedParcelForecast] = useState<{ year: number; value: number }[]>([]);
   const [selectedParcelImage, setSelectedParcelImage] = useState<string | undefined>(undefined);
   const [selectedParcelImages, setSelectedParcelImages] = useState<{ heading: number; url: string }[]>([]);
+  const [selectedParcelEnrich, setSelectedParcelEnrich] = useState<any | undefined>(undefined);
+  const [selectedParcelEnrichLoading, setSelectedParcelEnrichLoading] = useState<boolean>(false);
+  const [selectedParcelEnrichError, setSelectedParcelEnrichError] = useState<string | undefined>(undefined);
 
   // Generate property value data for overlay
   const generatePropertyValueData = () => {
@@ -231,6 +236,44 @@ function AppContent() {
       if (url) out.push({ heading: h, url });
     }
     return out;
+  };
+
+  // Enrich property data via serverless API (Gemini synthesis)
+  const fetchEnrich = async (addr?: string) => {
+    try {
+      if (!addr) return;
+      setSelectedParcelEnrichLoading(true);
+      setSelectedParcelEnrichError(undefined);
+      const r = await fetch('/api/insight', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: addr })
+      });
+      if (!r.ok) {
+        setSelectedParcelEnrichError(`HTTP ${r.status}`);
+        setSelectedParcelEnrichLoading(false);
+        return;
+      }
+      const data = await r.json();
+      setSelectedParcelEnrich(data);
+      // Map fields into panel state
+      const est = Number((data && data.current_estimate) ?? NaN);
+      if (!Number.isNaN(est)) setSelectedParcelValue(Math.round(est));
+      const f = Array.isArray(data?.forecast) ? data.forecast : [];
+      if (f.length) {
+        try {
+          const mapped = f.map((x: any) => ({ year: Number(x.year), value: Number(x.value) }))
+            .filter((x: any) => !Number.isNaN(x.year) && !Number.isNaN(x.value));
+          if (mapped.length) setSelectedParcelForecast(mapped);
+        } catch {}
+      }
+      if (data && data.error) setSelectedParcelEnrichError(String(data.detail || data.error));
+      setSelectedParcelEnrichLoading(false);
+    } catch (e) {
+      console.warn('enrich failed', e);
+      setSelectedParcelEnrichError('request_failed');
+      setSelectedParcelEnrichLoading(false);
+    }
   };
 
   // Toggle property value visibility
@@ -784,8 +827,11 @@ function AppContent() {
       // mark parcel selected
       setSelectedParcel({ center, area });
 
-      // reverse geocode
-      reverseGeocode(center).then(setSelectedParcelAddress);
+      // reverse geocode + enrichment
+      reverseGeocode(center).then((addr) => {
+        setSelectedParcelAddress(addr);
+        fetchEnrich(addr);
+      });
 
       // street view image
       const img = getStreetViewUrl(center);
@@ -1106,6 +1152,10 @@ function AppContent() {
           forecast={selectedParcelForecast}
           imageUrl={selectedParcelImage}
           images={selectedParcelImages}
+          enrich={selectedParcelEnrich}
+          enrichLoading={selectedParcelEnrichLoading}
+          enrichError={selectedParcelEnrichError}
+          onClose={() => setSelectedParcel(null)}
         />
       )}
 

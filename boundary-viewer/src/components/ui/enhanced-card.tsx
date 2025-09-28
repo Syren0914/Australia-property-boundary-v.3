@@ -1,5 +1,5 @@
 import React from 'react';
-import { LucideIcon } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
 interface CardProps {
   children: React.ReactNode;
@@ -11,6 +11,7 @@ interface CardProps {
   style?: React.CSSProperties;
   onClick?: () => void;
   hoverable?: boolean;
+  onClose?: () => void;
 }
 
 export const EnhancedCard: React.FC<CardProps> = ({
@@ -23,6 +24,7 @@ export const EnhancedCard: React.FC<CardProps> = ({
   style = {},
   onClick,
   hoverable = false,
+  onClose,
 }) => {
   const baseStyles = {
     borderRadius: '12px',
@@ -67,10 +69,8 @@ export const EnhancedCard: React.FC<CardProps> = ({
     e.currentTarget.style.boxShadow = variantStyles[variant].boxShadow || '0 1px 3px rgba(0, 0, 0, 0.1)';
   };
 
-  const CardComponent = onClick ? 'button' : 'div';
-
   return (
-    <CardComponent
+    <div
       onClick={onClick}
       onMouseOver={handleMouseOver}
       onMouseOut={handleMouseOut}
@@ -81,8 +81,35 @@ export const EnhancedCard: React.FC<CardProps> = ({
         cursor: onClick ? 'pointer' : 'default',
         textAlign: 'left' as const,
         width: '100%',
-      }}
+        backgroundColor: 'var(--card-bg)',
+        border: variant === 'elevated' ? 'none' : `1px solid var(--card-border)`,
+        color: 'var(--card-text)'
+      } as React.CSSProperties}
     >
+      {onClose && (
+        <button
+          aria-label="Close"
+          onClick={(e) => { e.stopPropagation(); onClose(); }}
+          style={{
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            zIndex: 200,
+            width: 28,
+            height: 28,
+            borderRadius: 999,
+            border: '1px solid #e5e7eb',
+            background: '#ffffff',
+            color: '#111827',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+          }}
+        >
+          ×
+        </button>
+      )}
       {(title || subtitle || Icon) && (
         <div style={{
           padding: '16px 16px 0 16px',
@@ -95,11 +122,11 @@ export const EnhancedCard: React.FC<CardProps> = ({
               width: '40px',
               height: '40px',
               borderRadius: '8px',
-              backgroundColor: '#f3f4f6',
+              backgroundColor: 'rgba(148, 163, 184, 0.2)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#6b7280',
+              color: 'var(--muted-text)',
               flexShrink: 0,
             }}>
               <Icon size={20} />
@@ -120,7 +147,7 @@ export const EnhancedCard: React.FC<CardProps> = ({
             {subtitle && (
               <p style={{
                 fontSize: '14px',
-                color: '#6b7280',
+                color: 'var(--muted-text)',
                 margin: 0,
                 lineHeight: '1.4',
               }}>
@@ -135,7 +162,7 @@ export const EnhancedCard: React.FC<CardProps> = ({
       }}>
         {children}
       </div>
-    </CardComponent>
+    </div>
   );
 };
 

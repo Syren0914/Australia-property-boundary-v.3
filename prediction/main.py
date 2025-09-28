@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 from fastapi import FastAPI
@@ -7,6 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
+import os
+import re
+import json
+import time
+import html as htmlmod
+from urllib.parse import urlencode, quote_plus
+import requests
 
 
 DATA_PATH = Path(__file__).parent / 'house_prices.csv'
@@ -27,6 +34,7 @@ app.add_middleware(
 model: Optional[LinearRegression] = None
 model_columns: List[str] = []
 rppi_df: Optional[pd.DataFrame] = None  # columns: ['date','region','index']
+_enrich_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 
 
 def load_and_train() -> None:
@@ -51,10 +59,10 @@ def load_and_train() -> None:
     df = df.fillna(df.median(numeric_only=True))
 
     # One-hot encode categoricals
-    df = pd.get_dummies(df)
+df = pd.get_dummies(df)
 
-    X = df.drop('SalePrice', axis=1)
-    y = df['SalePrice']
+X = df.drop('SalePrice', axis=1)
+y = df['SalePrice']
 
     if X.empty:
         model = None
@@ -165,6 +173,104 @@ def normalize_region(q: str) -> List[str]:
             return [k] + v
     # fallback: return the raw
     return [q]
+
+
+# ---------- ENRICH VIA SEARCH + GEMINI -----------
+def _search_results(address: str, limit: int = 5) -> List[Dict[str, str]]:
+    results: List[Dict[str, str]] = []
+    serp_key = os.getenv('SERPAPI_KEY')
+    if serp_key:
+        # Use SerpAPI with site filters
+        q = f"{address} site:zillow.com OR site:realtor.com OR site:redfin.com OR site:realestate.com.au OR site:domain.com.au"
+        params = {
+            'engine': 'google',
+            'q': q,
+            'num': limit,
+            'api_key': serp_key,
+        }
+        try:
+            r = requests.get('https://serpapi.com/search', params=params, timeout=15)
+            if r.ok:
+                data = r.json()
+                for it in (data.get('organic_results') or [])[:limit]:
+                    results.append({'site': it.get('source') or '', 'url': it.get('link') or ''})
+        except Exception:
+            pass
+        return results
+
+    # Google CSE fallback
+    cse_id = os.getenv('GOOGLE_CSE_ID')
+    cse_key = os.getenv('GOOGLE_SEARCH_KEY')
+    if cse_id and cse_key:
+        q = f"{address} (site:zillow.com OR site:realtor.com OR site:redfin.com OR site:realestate.com.au OR site:domain.com.au)"
+        params = {
+            'q': q,
+            'cx': cse_id,
+            'key': cse_key,
+            'num': limit,
+        }
+        try:
+            r = requests.get('https://www.googleapis.com/customsearch/v1', params=params, timeout=15)
+            if r.ok:
+                data = r.json()
+                for it in (data.get('items') or [])[:limit]:
+                    results.append({'site': it.get('displayLink') or '', 'url': it.get('link') or ''})
+        except Exception:
+            pass
+    return results
+
+
+def _fetch_text(url: str, max_len: int = 10000) -> str:
+    try:
+        r = requests.get(url, timeout=15, headers={'User-Agent': 'parcel-viewer-bot/1.0'})
+        if not r.ok:
+            return ''
+        html = r.text
+        # remove scripts/styles
+        html = re.sub(r'<script[\s\S]*?</script>', ' ', html, flags=re.I)
+        html = re.sub(r'<style[\s\S]*?</style>', ' ', html, flags=re.I)
+        # strip tags
+        text = re.sub(r'<[^>]+>', ' ', html)
+        text = htmlmod.unescape(text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text[:max_len]
+    except Exception:
+        return ''
+
+
+def _gemini_synthesize(address: str, snippets: List[Dict[str, str]]) -> Dict[str, Any]:
+    api_key = os.getenv('GEMINI_API_KEY')
+    if not api_key:
+        return {'error': 'missing_gemini_key'}
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('models/gemini-1.5-flash')
+    except Exception as e:
+        return {'error': f'gemini_import_failed: {e}'}
+
+    prompt = (
+        "You are a real estate data synthesizer. Using the provided snippets from multiple realtor websites, "
+        "produce a single JSON object with best-guess values. If unknown, use null. Fields: "
+        "address, est_price, price_range:{low,high}, bedrooms, bathrooms, lot_size_sq_m, building_area_sq_m, "
+        "last_sold:{date,price}, year_built, sources:[{site,url}]. Only output JSON.\n"
+        f"Address query: {address}\n\n"
+    )
+    body = prompt + "\n\n".join([
+        f"Source: {s.get('site','')} ({s.get('url','')})\n\n{s.get('text','')[:1800]}" for s in snippets
+    ])
+    try:
+        resp = model.generate_content(body)
+        text = (resp.text or '').strip()
+        # Remove code fences if present
+        if text.startswith('```'):
+            text = re.sub(r'^```[a-zA-Z]*', '', text).strip()
+            if text.endswith('```'):
+                text = text[:-3]
+        data = json.loads(text)
+        return data
+    except Exception as e:
+        return {'error': f'gemini_failed: {e}'}
 
 
 class PredictRequest(BaseModel):
@@ -325,3 +431,45 @@ def forecast(req: ForecastRequest) -> Dict[str, Any]:
 
 
 # Run with: uvicorn prediction.main:app --reload
+
+
+@app.post('/enrich')
+def enrich(payload: Dict[str, Any]) -> Dict[str, Any]:
+    address = str(payload.get('address', '')).strip()
+    if not address:
+        return { 'error': 'missing_address' }
+
+    # cache 24h
+    now = time.time()
+    cached = _enrich_cache.get(address)
+    if cached and (now - cached[0]) < 86400:
+        return cached[1]
+
+    # 1) search
+    results = _search_results(address, limit=4)
+    if not results:
+        data = { 'error': 'no_results' }
+        _enrich_cache[address] = (now, data)
+        return data
+
+    # 2) fetch texts
+    snippets: List[Dict[str, str]] = []
+    for r in results:
+        url = r.get('url')
+        if not url: 
+            continue
+        txt = _fetch_text(url)
+        if txt:
+            snippets.append({ 'site': r.get('site',''), 'url': url, 'text': txt })
+        if len(snippets) >= 3:
+            break
+
+    if not snippets:
+        data = { 'error': 'no_snippets' }
+        _enrich_cache[address] = (now, data)
+        return data
+
+    # 3) synthesize via Gemini
+    data = _gemini_synthesize(address, snippets)
+    _enrich_cache[address] = (now, data)
+    return data

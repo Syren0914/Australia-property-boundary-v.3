@@ -368,7 +368,23 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
               </EnhancedButton>
             )} */}
 
-            {/* AI Dashboard Button */}
+            {/* Theme Toggle */}
+            <EnhancedButton
+              onClick={() => {
+                const next = style === 'dark' ? 'default' : 'dark';
+                setStyle(next);
+                // Only switch map style; keep UI colors the same (no global dark class)
+                try { localStorage.setItem('mapTheme', next); } catch {}
+              }}
+              variant="secondary"
+              size="md"
+              icon={Settings}
+              style={{ borderRadius: '24px', minWidth: '120px' }}
+            >
+              {style === 'dark' ? 'Light Mode' : 'Dark Mode'}
+            </EnhancedButton>
+
+          {/* AI Dashboard Button */}
             {/* <EnhancedButton
               onClick={() => {
                 setSelectedProperty({

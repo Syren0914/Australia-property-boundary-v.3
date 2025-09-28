@@ -11,7 +11,11 @@ export default defineConfig({
         target:'https://spatial-img.information.qld.gov.au',
         changeOrigin:true,
         rewrite: p => p.replace(/^\/arcgis/, ''),
-      }
+      },
+      '/api': {
+      target: 'http://localhost:3000',
+      changeOrigin: true,
+    },
     }
   },
   resolve: {
