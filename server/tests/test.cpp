@@ -70,7 +70,7 @@ TEST_CASE("BVH camera query returns full properties", "[bvh]") {
     cam.meters_per_pixel = 1.0;
 
     std::vector<const Props*> visible;
-    all_nodes.front().collect_visible(cam, visible);
+    all_nodes.front().collect_visible(cam, CameraMode::TWO_D, visible);
 
     REQUIRE(visible.size() == 1);
     REQUIRE(visible.front() == prop0);
@@ -79,10 +79,54 @@ TEST_CASE("BVH camera query returns full properties", "[bvh]") {
     cam.view.min[0] = 95.0; cam.view.min[1] = 95.0;
     cam.view.max[0] = 120.0; cam.view.max[1] = 120.0;
 
-    all_nodes.front().collect_visible(cam, visible);
+    all_nodes.front().collect_visible(cam, CameraMode::TWO_D, visible);
 
     REQUIRE(visible.size() == 1);
     REQUIRE(visible.front() == prop1);
+
+    states.props = nullptr;
+    states.prop_count = 0;
+    props_data_bytes = 0;
+}
+
+TEST_CASE("BVH 3D mode expands intersection", "[bvh][camera]") {
+    constexpr int prop_count = 2;
+    const std::size_t stride = stride_for(4);
+    std::vector<std::uint8_t> storage(prop_count * stride);
+
+    auto* prop0 = reinterpret_cast<Props*>(storage.data());
+    prop0->coords_count = 4;
+    prop0->coords[0] = {0.0, 0.0};
+    prop0->coords[1] = {0.0, 10.0};
+    prop0->coords[2] = {10.0, 10.0};
+    prop0->coords[3] = {10.0, 0.0};
+
+    auto* prop1 = reinterpret_cast<Props*>(storage.data() + stride);
+    prop1->coords_count = 4;
+    prop1->coords[0] = {2000.0, 2000.0};
+    prop1->coords[1] = {2000.0, 2010.0};
+    prop1->coords[2] = {2010.0, 2010.0};
+    prop1->coords[3] = {2010.0, 2000.0};
+
+    states.props = prop0;
+    states.prop_count = prop_count;
+    props_data_bytes = storage.size();
+
+    Node::build_tree(/*threads*/1);
+    REQUIRE_FALSE(all_nodes.empty());
+
+    CameraMeters cam{};
+    cam.view.min[0] = -5.0; cam.view.min[1] = -5.0;
+    cam.view.max[0] = +15.0; cam.view.max[1] = +15.0;
+    cam.meters_per_pixel = 10'000.0; // large to expand coverage in 3D mode
+
+    std::vector<const Props*> visible2d;
+    all_nodes.front().collect_visible(cam, CameraMode::TWO_D, visible2d);
+    REQUIRE(visible2d.size() == 1);
+
+    std::vector<const Props*> visible3d;
+    all_nodes.front().collect_visible(cam, CameraMode::THREE_D, visible3d);
+    REQUIRE(visible3d.size() == 2);
 
     states.props = nullptr;
     states.prop_count = 0;
@@ -128,7 +172,7 @@ TEST_CASE("Parallel BVH build matches serial", "[bvh][parallel]") {
     cam.meters_per_pixel = 1.0;
 
     std::vector<const Props*> visible_parallel;
-    all_nodes.front().collect_visible(cam, visible_parallel);
+    all_nodes.front().collect_visible(cam, CameraMode::TWO_D, visible_parallel);
 
     REQUIRE_FALSE(visible_parallel.empty());
     REQUIRE(std::find(visible_parallel.begin(), visible_parallel.end(),
@@ -141,7 +185,7 @@ TEST_CASE("Parallel BVH build matches serial", "[bvh][parallel]") {
     REQUIRE_FALSE(all_nodes.empty());
 
     std::vector<const Props*> visible_serial;
-    all_nodes.front().collect_visible(cam, visible_serial);
+    all_nodes.front().collect_visible(cam, CameraMode::TWO_D, visible_serial);
 
     REQUIRE(visible_parallel.size() == visible_serial.size());
     std::sort(visible_parallel.begin(), visible_parallel.end());

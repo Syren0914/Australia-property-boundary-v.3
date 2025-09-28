@@ -26,6 +26,8 @@ const useMobileDetection = () => {
   return isMobile;
 };
 
+const API_BASE = import.meta.env.VITE_BVH_API ?? 'http://localhost:8080';
+
 // DEV: hits Vite proxy → ArcGIS directly
 async function getElevationsMultiDev(pointsLngLat: [number, number][]) {
   const params = new URLSearchParams({
@@ -269,9 +271,55 @@ function AppContent() {
     }
 
     // Track map center for search proximity
-    map.on('moveend', () => {
+    const sendCameraState = async (mapInstance: maplibregl.Map) => {
+      const bounds = mapInstance.getBounds();
+      const center = mapInstance.getCenter();
+      const zoom = mapInstance.getZoom();
+      const pitch = mapInstance.getPitch();
+
+      const metersPerPixel = 156543.03392 * Math.cos(center.lat * Math.PI / 180) / Math.pow(2, zoom);
+
+      const payload = {
+        mode: pitch > 0 ? 'THREE_D' : 'TWO_D',
+        zoom,
+        center: { lng: center.lng, lat: center.lat },
+        bounds: {
+          west: bounds.getWest(),
+          south: bounds.getSouth(),
+          east: bounds.getEast(),
+          north: bounds.getNorth(),
+        },
+        metersPerPixel,
+        pitch,
+        bearing: mapInstance.getBearing(),
+      };
+
+      try {
+        const response = await fetch(`${API_BASE}/api/camera-state`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Camera update failed: ${response.status}`);
+        }
+
+        return await response.json();
+      } catch (err) {
+        console.error('Failed to push camera state to backend', err);
+        return null;
+      }
+    };
+
+    map.on('moveend', async () => {
       const center = map.getCenter();
       setMapCenter([center.lng, center.lat]);
+
+      const result = await sendCameraState(map);
+      if (result) {
+        console.debug('Camera state ack:', result);
+      }
     });
 
     const pmtilesUrl = 'https://wxwbxupdisbofesaygqj.functions.supabase.co/pmtiles-proxy';

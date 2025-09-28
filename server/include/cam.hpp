@@ -1,5 +1,11 @@
 #pragma once
 
+#include <AABB.hpp>
+
+enum class CameraMode {
+    TWO_D,
+    THREE_D
+};
 
 struct CameraMeters {
     AABB view; // in meters
@@ -23,5 +29,4 @@ class Camera {
 };
 
 extern CameraMeters last_camera_meters;
-
 

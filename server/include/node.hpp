@@ -57,5 +57,7 @@ struct Node {
      * @param view Camera view in meters.
      * @param out Output vector of Props pointers.
      */
-    void collect_visible(const CameraMeters& view, std::vector<const Props*>& out) const;
+    void collect_visible(const CameraMeters& view,
+                         CameraMode mode,
+                         std::vector<const Props*>& out) const;
 };

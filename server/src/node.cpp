@@ -40,6 +40,18 @@ static inline std::size_t aligned_stride(std::size_t coordCount) noexcept {
     return (bytes + (align - 1)) & ~(align - 1);
 }
 
+static inline AABB view_bounds_for_mode(const CameraMeters& meters, CameraMode mode) {
+    AABB bounds = meters.view;
+    if (mode == CameraMode::THREE_D && bounds.valid()) {
+        const double margin = std::max(meters.meters_per_pixel * 512.0, 0.0);
+        bounds.min[0] -= margin;
+        bounds.min[1] -= margin;
+        bounds.max[0] += margin;
+        bounds.max[1] += margin;
+    }
+    return bounds;
+}
+
 static inline PropRef make_prop_ref(const Props* prop) {
     PropRef ref{};
     ref.props = prop;
@@ -226,23 +238,27 @@ void Node::build_tree(int threads) {
     build_recursive(prop_refs.data(), prop_refs.data() + prop_refs.size());
 }
 
-void Node::collect_visible(const CameraMeters& view, std::vector<const Props*>& out) const {
-    if (!box.valid() || !box.overlaps(view.view)) {
+void Node::collect_visible(const CameraMeters& view,
+                           CameraMode mode,
+                           std::vector<const Props*>& out) const {
+    const AABB view_bounds = view_bounds_for_mode(view, mode);
+
+    if (!box.valid() || !view_bounds.valid() || !box.overlaps(view_bounds)) {
         return;
     }
 
     if (!left && !right) {
         for (PropRef* it = prop_begin; it != prop_end; ++it) {
             if (!it->box.valid()) continue;
-            if (it->box.overlaps(view.view)) {
+            if (it->box.overlaps(view_bounds)) {
                 out.push_back(it->props);
             }
         }
         return;
     }
 
-    if (left) left->collect_visible(view, out);
-    if (right) right->collect_visible(view, out);
+    if (left) left->collect_visible(view, mode, out);
+    if (right) right->collect_visible(view, mode, out);
 }
 
 bool Node::export_pmtiles(const std::string& path,
