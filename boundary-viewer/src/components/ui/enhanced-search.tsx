@@ -53,13 +53,7 @@ export const EnhancedSearch: React.FC<EnhancedSearchProps> = ({
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Queensland, Australia bounds
-  const qldBounds = useMemo(() => ({
-    west: 138.0,
-    east: 153.5,
-    south: -29.2,
-    north: -9.0
-  }), []);
+  // Global search (no regional bounds)
 
   // Load recent searches from localStorage
   useEffect(() => {
@@ -144,8 +138,6 @@ export const EnhancedSearch: React.FC<EnhancedSearchProps> = ({
 
       const params = new URLSearchParams({
         address: searchQuery,
-        region: 'au',
-        components: 'country:AU|administrative_area:QLD',
         key: googleKey
       });
 
@@ -180,11 +172,7 @@ export const EnhancedSearch: React.FC<EnhancedSearchProps> = ({
                 result.types?.includes('establishment') ? 'landmark' : 'area'
         })) || [];
         
-        const filteredResults = results.filter(result => {
-          const [lng, lat] = result.center;
-          return lng >= qldBounds.west && lng <= qldBounds.east && 
-                 lat >= qldBounds.south && lat <= qldBounds.north;
-        }).slice(0, maxSuggestions);
+        const filteredResults = results.slice(0, maxSuggestions);
         
         setSuggestions(filteredResults);
         setShowDropdown(filteredResults.length > 0);
@@ -200,7 +188,7 @@ export const EnhancedSearch: React.FC<EnhancedSearchProps> = ({
     } finally {
       setIsLoading(false);
     }
-  }, [qldBounds, maxSuggestions]);
+  }, [maxSuggestions]);
 
   const handleSelect = useCallback((result: SearchResult) => {
     onLocationSelect(result);
@@ -271,10 +259,18 @@ export const EnhancedSearch: React.FC<EnhancedSearchProps> = ({
       parts.push(props.city);
     }
     
-    if (props.postcode) {
-      parts.push(`QLD ${props.postcode}`);
-    } else {
-      parts.push('QLD');
+    // Region/state and postal code
+    if (props.state && props.postcode) {
+      parts.push(`${props.state} ${props.postcode}`);
+    } else if (props.state) {
+      parts.push(props.state);
+    } else if (props.postcode) {
+      parts.push(props.postcode);
+    }
+
+    // Country (fallback/global)
+    if (props.country) {
+      parts.push(props.country);
     }
     
     return parts.join(', ');
