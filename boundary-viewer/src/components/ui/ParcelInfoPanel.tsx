@@ -1,5 +1,4 @@
 import React, { useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { EnhancedCard } from './enhanced-card';
 import { EnhancedButton } from './enhanced-button';
 import { MapPin, Calendar } from 'lucide-react';
@@ -108,21 +107,16 @@ export const ParcelInfoPanel: React.FC<ParcelInfoPanelProps> = ({
   };
 
   return (
-    <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0, x: -24 }}
-        animate={{ opacity: 1, x: 0 }}
-        exit={{ opacity: 0, x: -24 }}
-        transition={{ type: 'spring', stiffness: 260, damping: 24 }}
-        style={{
-          position: 'absolute',
-          top: 16,
-          left: 16,
-          zIndex: 1001,
-          maxWidth: 360,
-          marginTop: 60
-        }}
-      >
+    <div
+      style={{
+        position: 'absolute',
+        top: 16,
+        left: 16,
+        zIndex: 1001,
+        maxWidth: 360,
+        marginTop: 60
+      }}
+    >
         <EnhancedCard
           title="Parcel Information"
           subtitle={address || 'Fetching address...'}
@@ -291,8 +285,7 @@ export const ParcelInfoPanel: React.FC<ParcelInfoPanelProps> = ({
           </div>
         )}
         </EnhancedCard>
-      </motion.div>
-    </AnimatePresence>
+      </div>
   );
 };
 
