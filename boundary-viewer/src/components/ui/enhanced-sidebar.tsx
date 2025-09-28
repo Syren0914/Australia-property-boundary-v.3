@@ -289,7 +289,7 @@ export const ModernSidebar: React.FC<ModernSidebarProps> = ({
         }}>
           <EnhancedSearch 
             onLocationSelect={handleSearchSelect}
-            placeholder="Search Queensland addresses..."
+            placeholder="Search an address.."
             showRecentSearches={true}
             maxSuggestions={6}
           />

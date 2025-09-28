@@ -75,7 +75,6 @@ export class PropertyValueEstimator {
   }
 
   private getLocationFactor(coordinates: [number, number]): number {
-    const [lng, lat] = coordinates;
     
     // Brisbane CBD coordinates
     const brisbaneCBD: [number, number] = [153.026, -27.4705];

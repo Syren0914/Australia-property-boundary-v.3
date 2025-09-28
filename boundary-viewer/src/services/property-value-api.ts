@@ -1,5 +1,6 @@
 // Property Value API Integration Examples
 // This file shows different approaches to get real property values
+import { useState } from 'react';
 
 // 1. CoreLogic API Integration (Example)
 export class CoreLogicAPI {
@@ -82,15 +83,13 @@ export class DomainAPI {
 
   async getPropertyValue(address: string) {
     try {
-      const response = await fetch(`${this.baseUrl}/v1/properties/search`, {
+      const url = new URL(`${this.baseUrl}/v1/properties/search`);
+      url.search = new URLSearchParams({ q: address, limit: '1' }).toString();
+      const response = await fetch(url.toString(), {
         method: 'GET',
         headers: {
           'X-API-Key': this.apiKey,
-        },
-        params: new URLSearchParams({
-          q: address,
-          limit: 1
-        })
+        }
       });
 
       const data = await response.json();
@@ -120,13 +119,9 @@ export class GovernmentDataAPI {
 
   async getPropertyBoundaries(bbox: [number, number, number, number]) {
     try {
-      const response = await fetch(`${this.baseUrl}/datasets/property-boundaries`, {
-        method: 'GET',
-        params: new URLSearchParams({
-          bbox: bbox.join(','),
-          format: 'geojson'
-        })
-      });
+      const url = new URL(`${this.baseUrl}/datasets/property-boundaries`);
+      url.search = new URLSearchParams({ bbox: bbox.join(','), format: 'geojson' }).toString();
+      const response = await fetch(url.toString(), { method: 'GET' });
 
       const data = await response.json();
       return data.features;
@@ -138,13 +133,9 @@ export class GovernmentDataAPI {
 
   async getDemographicData(postcode: string) {
     try {
-      const response = await fetch(`${this.baseUrl}/datasets/demographics`, {
-        method: 'GET',
-        params: new URLSearchParams({
-          postcode: postcode,
-          format: 'json'
-        })
-      });
+      const url = new URL(`${this.baseUrl}/datasets/demographics`);
+      url.search = new URLSearchParams({ postcode: postcode, format: 'json' }).toString();
+      const response = await fetch(url.toString(), { method: 'GET' });
 
       const data = await response.json();
       return {
@@ -236,10 +227,9 @@ export class PropertyValueService {
 
   private getLocationMultiplier(coordinates: [number, number]): number {
     // Adjust value based on location (city center vs suburbs)
-    const [lng, lat] = coordinates;
     
     // Brisbane CBD coordinates
-    const brisbaneCBD = [153.026, -27.4705];
+    const brisbaneCBD: [number, number] = [153.026, -27.4705];
     const distance = this.calculateDistance(coordinates, brisbaneCBD);
     
     // Closer to CBD = higher value
