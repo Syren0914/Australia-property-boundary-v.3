@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <fstream>
 #include <limits>
 #include <vector>
 
@@ -19,6 +20,19 @@ namespace {
 constexpr std::size_t kLeafSize = 16;
 
 std::vector<PropRef> prop_refs;
+
+constexpr double kPi = 3.14159265358979323846;
+
+static inline double tile_x_to_lon(uint32_t x, uint8_t z) {
+    const double n = std::ldexp(1.0, z); // 2^z
+    return x / n * 360.0 - 180.0;
+}
+
+static inline double tile_y_to_lat(uint32_t y, uint8_t z) {
+    const double n = std::ldexp(1.0, z);
+    const double t = kPi - 2.0 * kPi * static_cast<double>(y) / n;
+    return std::atan(std::sinh(t)) * 180.0 / kPi;
+}
 
 static inline std::size_t aligned_stride(std::size_t coordCount) noexcept {
     const std::size_t align = alignof(Props);
@@ -229,4 +243,140 @@ void Node::collect_visible(const CameraMeters& view, std::vector<const Props*>& 
 
     if (left) left->collect_visible(view, out);
     if (right) right->collect_visible(view, out);
+}
+
+bool Node::export_pmtiles(const std::string& path,
+                          const std::vector<std::pair<pmtiles::zxy, std::string>>& tiles,
+                          const std::string& metadata_json,
+                          uint8_t tile_type,
+                          uint8_t tile_compression) {
+    std::vector<std::pair<pmtiles::zxy, std::string>> sorted_tiles = tiles;
+    std::sort(sorted_tiles.begin(), sorted_tiles.end(), [](const auto& a, const auto& b) {
+        if (a.first.z != b.first.z) return a.first.z < b.first.z;
+        if (a.first.x != b.first.x) return a.first.x < b.first.x;
+        return a.first.y > b.first.y;
+    });
+
+    std::vector<pmtiles::entryv3> entries;
+    entries.reserve(sorted_tiles.size());
+    std::string tile_data_blob;
+    tile_data_blob.reserve(tiles.size() * 64);
+
+    uint64_t offset = 0;
+    uint8_t min_zoom = std::numeric_limits<uint8_t>::max();
+    uint8_t max_zoom = 0;
+    double min_lon = 180.0;
+    double min_lat = 90.0;
+    double max_lon = -180.0;
+    double max_lat = -90.0;
+
+    for (const auto& entry : sorted_tiles) {
+        const pmtiles::zxy& tile = entry.first;
+        const std::string& payload = entry.second;
+
+        const uint64_t tile_id = pmtiles::zxy_to_tileid(tile.z, tile.x, tile.y);
+
+        if (payload.size() > std::numeric_limits<uint32_t>::max()) {
+            return false;
+        }
+
+        entries.emplace_back(tile_id, offset, static_cast<uint32_t>(payload.size()), 1);
+        tile_data_blob.append(payload);
+        offset += payload.size();
+
+        min_zoom = std::min<uint8_t>(min_zoom, tile.z);
+        max_zoom = std::max<uint8_t>(max_zoom, tile.z);
+
+        const double tile_min_lon = tile_x_to_lon(tile.x, tile.z);
+        const double tile_max_lon = tile_x_to_lon(tile.x + 1, tile.z);
+        const double tile_min_lat = tile_y_to_lat(tile.y + 1, tile.z);
+        const double tile_max_lat = tile_y_to_lat(tile.y, tile.z);
+
+        min_lon = std::min(min_lon, tile_min_lon);
+        min_lat = std::min(min_lat, tile_min_lat);
+        max_lon = std::max(max_lon, tile_max_lon);
+        max_lat = std::max(max_lat, tile_max_lat);
+    }
+
+    const std::string metadata = metadata_json.empty() ? std::string("{}") : metadata_json;
+
+    std::string root_dir_bytes;
+    std::string leaf_dir_bytes;
+    if (!entries.empty()) {
+        auto identity = [](const std::string& data, uint8_t) { return data; };
+        int leaf_count = 0;
+        std::tie(root_dir_bytes, leaf_dir_bytes, leaf_count) =
+            pmtiles::make_root_leaves(identity, pmtiles::COMPRESSION_NONE, entries);
+    }
+
+    constexpr uint64_t header_size = 127;
+    const uint64_t root_offset = header_size;
+    const uint64_t leaf_offset = root_offset + static_cast<uint64_t>(root_dir_bytes.size());
+    const uint64_t tile_offset = leaf_offset + static_cast<uint64_t>(leaf_dir_bytes.size());
+    const uint64_t metadata_offset = tile_offset + static_cast<uint64_t>(tile_data_blob.size());
+
+    pmtiles::headerv3 header{};
+    header.root_dir_offset = root_dir_bytes.empty() ? 0 : root_offset;
+    header.root_dir_bytes = root_dir_bytes.size();
+    header.leaf_dirs_offset = leaf_dir_bytes.empty() ? 0 : leaf_offset;
+    header.leaf_dirs_bytes = leaf_dir_bytes.size();
+    header.tile_data_offset = tile_data_blob.empty() ? 0 : tile_offset;
+    header.tile_data_bytes = tile_data_blob.size();
+    header.json_metadata_offset = metadata.empty() ? 0 : metadata_offset;
+    header.json_metadata_bytes = metadata.size();
+    header.addressed_tiles_count = entries.size();
+    header.tile_entries_count = entries.size();
+    header.tile_contents_count = entries.size();
+    header.clustered = false;
+    header.internal_compression = pmtiles::COMPRESSION_NONE;
+    header.tile_compression = tile_compression;
+    header.tile_type = tile_type;
+
+    if (!entries.empty()) {
+        header.min_zoom = min_zoom;
+        header.max_zoom = max_zoom;
+        header.min_lon_e7 = static_cast<int32_t>(std::round(std::clamp(min_lon, -180.0, 180.0) * 1e7));
+        header.min_lat_e7 = static_cast<int32_t>(std::round(std::clamp(min_lat, -90.0, 90.0) * 1e7));
+        header.max_lon_e7 = static_cast<int32_t>(std::round(std::clamp(max_lon, -180.0, 180.0) * 1e7));
+        header.max_lat_e7 = static_cast<int32_t>(std::round(std::clamp(max_lat, -90.0, 90.0) * 1e7));
+        const double center_lon = (min_lon + max_lon) * 0.5;
+        const double center_lat = (min_lat + max_lat) * 0.5;
+        header.center_zoom = header.max_zoom;
+        header.center_lon_e7 = static_cast<int32_t>(std::round(std::clamp(center_lon, -180.0, 180.0) * 1e7));
+        header.center_lat_e7 = static_cast<int32_t>(std::round(std::clamp(center_lat, -90.0, 90.0) * 1e7));
+    } else {
+        header.min_zoom = 0;
+        header.max_zoom = 0;
+        header.min_lon_e7 = 0;
+        header.min_lat_e7 = 0;
+        header.max_lon_e7 = 0;
+        header.max_lat_e7 = 0;
+        header.center_zoom = 0;
+        header.center_lon_e7 = 0;
+        header.center_lat_e7 = 0;
+    }
+
+    const std::string header_bytes = header.serialize();
+
+    std::ofstream out(path, std::ios::binary);
+    if (!out) {
+        return false;
+    }
+
+    out.write(header_bytes.data(), static_cast<std::streamsize>(header_bytes.size()));
+    if (!root_dir_bytes.empty()) {
+        out.write(root_dir_bytes.data(), static_cast<std::streamsize>(root_dir_bytes.size()));
+    }
+    if (!leaf_dir_bytes.empty()) {
+        out.write(leaf_dir_bytes.data(), static_cast<std::streamsize>(leaf_dir_bytes.size()));
+    }
+    if (!tile_data_blob.empty()) {
+        out.write(tile_data_blob.data(), static_cast<std::streamsize>(tile_data_blob.size()));
+    }
+    if (!metadata.empty()) {
+        out.write(metadata.data(), static_cast<std::streamsize>(metadata.size()));
+    }
+
+    out.flush();
+    return static_cast<bool>(out);
 }

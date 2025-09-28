@@ -2,7 +2,10 @@
 
 #include <AABB.hpp>
 #include <cam.hpp>
+#include <pmtiles.hpp>
 
+#include <string>
+#include <utility>
 #include <vector>
 
 
@@ -29,6 +32,11 @@ struct Node {
     PropRef* prop_end{nullptr};
 
     static void build_tree(int threads);
+    static bool export_pmtiles(const std::string& path,
+                               const std::vector<std::pair<pmtiles::zxy, std::string>>& tiles,
+                               const std::string& metadata_json = "{}",
+                               uint8_t tile_type = pmtiles::TILETYPE_MVT,
+                               uint8_t tile_compression = pmtiles::COMPRESSION_NONE);
 
     bool is_leaf() const noexcept { return !left && !right; }
     void collect_visible(const CameraMeters& view, std::vector<const Props*>& out) const;

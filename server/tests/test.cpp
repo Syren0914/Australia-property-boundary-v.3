@@ -3,8 +3,11 @@
 #include "AABB.hpp"
 #include "read.hpp"
 #include "reader.h"
-#include <cstdint>
+#include "pmtiles.hpp"
 #include <algorithm>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <vector>
 
 #include <global.hpp>
@@ -151,6 +154,29 @@ TEST_CASE("Parallel BVH build matches serial", "[bvh][parallel]") {
     states.props = nullptr;
     states.prop_count = 0;
     props_data_bytes = 0;
+}
+
+TEST_CASE("PMTiles export writes valid header", "[pmtiles]") {
+    std::vector<std::pair<pmtiles::zxy, std::string>> tiles;
+    tiles.emplace_back(pmtiles::zxy{0, 0, 0}, std::string("test_tile_data"));
+
+    const auto temp_path = std::filesystem::temp_directory_path() / "node_pmtiles_test.pmtiles";
+    REQUIRE(Node::export_pmtiles(temp_path.string(), tiles, "{}"));
+
+    std::ifstream input(temp_path, std::ios::binary);
+    REQUIRE(input.good());
+
+    std::string header_bytes(127, '\0');
+    input.read(header_bytes.data(), static_cast<std::streamsize>(header_bytes.size()));
+    REQUIRE(input.gcount() == static_cast<std::streamsize>(header_bytes.size()));
+
+    auto header = pmtiles::deserialize_header(header_bytes);
+    REQUIRE(header.addressed_tiles_count == 1);
+    REQUIRE(header.tile_data_bytes == tiles.front().second.size());
+    REQUIRE(header.tile_type == pmtiles::TILETYPE_MVT);
+
+    input.close();
+    std::filesystem::remove(temp_path);
 }
 
 //TEST_CASE("All layers in wi-parcels.pmtiles are processed", "[pmtiles]") {
