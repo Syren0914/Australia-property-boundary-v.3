@@ -32,6 +32,12 @@ if(APPLE)
   target_link_libraries(boundary PRIVATE c++ c++abi)
 endif()
 
+# Optimization flags for non-Apple, non-MSVC builds
+if(NOT APPLE AND NOT MSVC)
+  target_compile_options(boundary PRIVATE -O3 -march=native -flto)
+  target_link_options(boundary PRIVATE -flto)
+endif()
+
 find_package(GDAL REQUIRED)
 target_link_libraries(boundary PRIVATE GDAL::GDAL)
 
@@ -70,6 +76,11 @@ if(APPLE)
   target_link_directories(my_test PRIVATE /opt/homebrew/opt/llvm/lib)
   target_link_options(my_test PRIVATE -stdlib=libc++ -Wl,-rpath,/opt/homebrew/opt/llvm/lib)
   target_link_libraries(my_test PRIVATE c++ c++abi)
+endif()
+
+if(NOT APPLE AND NOT MSVC)
+  target_compile_options(my_test PRIVATE -O3 -march=native -flto)
+  target_link_options(my_test PRIVATE -flto)
 endif()
 
 if(nlohmann_json_FOUND)

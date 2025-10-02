@@ -3,6 +3,13 @@
 #include <cstring>
 #include <stdexcept>
 
+#if defined(__linux__)
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 // Helper: decompress does nothing (no compression support)
 static std::string no_decompress(const std::string& s, uint8_t) {
     return s;
@@ -30,15 +37,40 @@ PmtilesReader::PmtilesReader(const char* const* data_arr, size_t arr_size) {
     set_buffer(owned_buffer.get(), total);
 }
 
-PmtilesReader::~PmtilesReader() {}
+PmtilesReader::~PmtilesReader() {
+#if defined(__linux__)
+    if (mapped_region) {
+        ::munmap(mapped_region, buffer_size);
+        mapped_region = nullptr;
+    }
+#endif
+}
 
 void PmtilesReader::open_file(const std::string& path) {
+    opened = false;
+#if defined(__linux__)
+    int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd >= 0) {
+        struct stat st;
+        if (::fstat(fd, &st) == 0 && st.st_size > 0) {
+            void* addr = ::mmap(nullptr, static_cast<size_t>(st.st_size), PROT_READ, MAP_PRIVATE, fd, 0);
+            if (addr != MAP_FAILED) {
+                mapped_region = addr;
+                set_buffer(static_cast<const char*>(addr), static_cast<size_t>(st.st_size));
+                opened = true;
+            }
+        }
+        ::close(fd);
+        if (opened) return;
+    }
+#endif
+    // Fallback: read into heap buffer
     std::ifstream f(path, std::ios::binary | std::ios::ate);
     if (!f) {
         opened = false;
         return;
     }
-    size_t sz = f.tellg();
+    size_t sz = static_cast<size_t>(f.tellg());
     f.seekg(0, std::ios::beg);
     owned_buffer = std::make_unique<char[]>(sz);
     if (!f.read(owned_buffer.get(), sz)) {
@@ -46,6 +78,7 @@ void PmtilesReader::open_file(const std::string& path) {
         return;
     }
     set_buffer(owned_buffer.get(), sz);
+    opened = true;
 }
 
 void PmtilesReader::set_buffer(const char* buf, size_t sz) {

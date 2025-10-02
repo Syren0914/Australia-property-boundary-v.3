@@ -236,9 +236,14 @@ constexpr std::size_t kSha1DigestSize = 20;
 
 struct PmtilesSubset {
     std::string base64_blob;
+    std::string raw_blob; // raw PMTiles bytes (subset)
     std::size_t tile_count{0};
     uint8_t zoom{0};
 };
+
+// Thread-local buffer to carry raw subset bytes from processing to websocket sender without changing HTTP API
+static thread_local std::string tls_last_subset_raw;
+static thread_local bool tls_has_subset_raw = false;
 
 std::optional<PmtilesSubset> build_pmtiles_subset(const nlohmann::json& payload,
                                                   uint8_t subset_zoom,
@@ -341,7 +346,8 @@ std::optional<PmtilesSubset> build_pmtiles_subset(const nlohmann::json& payload,
     PmtilesSubset subset;
     subset.tile_count = tiles.size();
     subset.zoom = subset_zoom;
-    subset.base64_blob = base64_encode(reinterpret_cast<const unsigned char*>(blob.data()), blob.size());
+    subset.raw_blob = std::move(blob);
+    subset.base64_blob = base64_encode(reinterpret_cast<const unsigned char*>(subset.raw_blob.data()), subset.raw_blob.size());
     return subset;
 }
 
@@ -591,6 +597,29 @@ bool send_websocket_pong(int fd, const std::vector<std::uint8_t>& payload) {
     return send_all(fd, frame.data(), frame.size());
 }
 
+bool send_websocket_binary(int fd, const std::string& bytes) {
+    std::vector<std::uint8_t> frame;
+    frame.reserve(2 + bytes.size());
+    frame.push_back(0x80 | 0x2); // FIN + binary opcode
+
+    const std::size_t len = bytes.size();
+    if (len <= 125) {
+        frame.push_back(static_cast<std::uint8_t>(len));
+    } else if (len <= 0xFFFF) {
+        frame.push_back(126);
+        frame.push_back(static_cast<std::uint8_t>((len >> 8) & 0xFF));
+        frame.push_back(static_cast<std::uint8_t>(len & 0xFF));
+    } else {
+        frame.push_back(127);
+        for (int i = 7; i >= 0; --i) {
+            frame.push_back(static_cast<std::uint8_t>((static_cast<std::uint64_t>(len) >> (i * 8)) & 0xFF));
+        }
+    }
+
+    frame.insert(frame.end(), bytes.begin(), bytes.end());
+    return send_all(fd, frame.data(), frame.size());
+}
+
 bool perform_websocket_handshake(int fd, const HeaderList& headers) {
     const std::string* key = find_header_value(headers, "sec-websocket-key");
     if (!key || key->empty()) {
@@ -644,7 +673,19 @@ void run_websocket_loop(int fd) {
         try {
             nlohmann::json payload = nlohmann::json::parse(text);
             nlohmann::json response = process_camera_state(payload);
-            send_websocket_text(fd, response.dump());
+            const bool accept_binary = payload.value("acceptBinary", false);
+            if (accept_binary && tls_has_subset_raw && response.contains("pmtiles_subset") && !response["pmtiles_subset"].is_null()) {
+                // Tell client we're sending binary in a separate frame
+                nlohmann::json meta = response;
+                meta["pmtiles_subset"]["encoding"] = "binary";
+                meta["pmtiles_subset"].erase("data");
+                send_websocket_text(fd, meta.dump());
+                send_websocket_binary(fd, tls_last_subset_raw);
+                tls_last_subset_raw.clear();
+                tls_has_subset_raw = false;
+            } else {
+                send_websocket_text(fd, response.dump());
+            }
         } catch (const std::exception& ex) {
             nlohmann::json error = {
                 {"status", "error"},
@@ -667,21 +708,16 @@ CameraMeters make_camera_meters(const nlohmann::json& payload) {
     const double east  = bounds.at("east").get<double>();
     const double north = bounds.at("north").get<double>();
 
-    constexpr double kSupportedLatMin = 20.0;  // EPSG:5070 (CONUS Albers) domain
-    constexpr double kSupportedLatMax = 60.0;
-
-    if (south < kSupportedLatMin || north > kSupportedLatMax) {
-        std::ostringstream oss;
-        oss << "Camera latitude must stay between "
-            << kSupportedLatMin << " and " << kSupportedLatMax << " degrees";
-        throw std::runtime_error(oss.str());
-    }
+    // Allow global extents; clamp to Web Mercator valid latitude range
+    const double south_clamped = std::clamp(south, kMinWebMercatorLat, kMaxWebMercatorLat);
+    const double north_clamped = std::clamp(north, kMinWebMercatorLat, kMaxWebMercatorLat);
 
     OGRSpatialReference src;
     src.SetWellKnownGeogCS("WGS84");
 
+    // Use global Web Mercator (meters) instead of CONUS Albers (EPSG:5070)
     OGRSpatialReference dst;
-    dst.importFromEPSG(5070);
+    dst.importFromEPSG(3857);
 
     auto transform = std::unique_ptr<OGRCoordinateTransformation, decltype(&OGRCoordinateTransformation::DestroyCT)>{
         OGRCreateCoordinateTransformation(&src, &dst),
@@ -692,20 +728,20 @@ CameraMeters make_camera_meters(const nlohmann::json& payload) {
         throw std::runtime_error("Failed to create coordinate transformation");
     }
 
+    // Silence occasional projection warnings while transforming bounds
     struct ProjErrorSilencer {
         ProjErrorSilencer() { CPLPushErrorHandler(&ProjErrorSilencer::handler); }
         ~ProjErrorSilencer() { CPLPopErrorHandler(); }
         static void handler(CPLErr eErr, int err_no, const char* msg) {
-            if (msg && (std::strstr(msg, "aea: Invalid latitude") ||
-                        std::strstr(msg, "Lossy conversion occurred"))) {
-                return; // ignore out-of-range Albers warnings
+            if (msg && std::strstr(msg, "Lossy conversion")) {
+                return;
             }
             CPLDefaultErrorHandler(eErr, err_no, msg);
         }
     } silencer;
 
     double xs[4] = { west, east, east, west };
-    double ys[4] = { south, south, north, north };
+    double ys[4] = { south_clamped, south_clamped, north_clamped, north_clamped };
     double zs[4] = { 0.0, 0.0, 0.0, 0.0 };
 
     if (!transform->Transform(4, xs, ys, zs)) {
@@ -816,15 +852,23 @@ nlohmann::json process_camera_state(const nlohmann::json& payload) {
 
         if (allow_detail && max_tiles > 0) {
             if (auto subset = build_pmtiles_subset(payload, subset_zoom, max_tiles)) {
+                // Stash raw for optional binary websocket send
+                tls_last_subset_raw = std::move(subset->raw_blob);
+                tls_has_subset_raw = !tls_last_subset_raw.empty();
                 response["pmtiles_subset"] = {
                     {"zoom", static_cast<int>(subset->zoom)},
                     {"tile_count", subset->tile_count},
                     {"encoding", "base64"},
                     {"data", std::move(subset->base64_blob)}
                 };
+            } else {
+                tls_last_subset_raw.clear();
+                tls_has_subset_raw = false;
             }
         } else {
             response["pmtiles_subset"] = nullptr;
+            tls_last_subset_raw.clear();
+            tls_has_subset_raw = false;
         }
     } catch (const std::exception& ex) {
         std::cerr << "[pmtiles] subset generation failed: " << ex.what() << std::endl;

@@ -27,4 +27,9 @@ private:
     const char* buffer = nullptr;
     size_t buffer_size = 0;
     bool opened = false;
+
+#if defined(__linux__)
+    // For mmap lifecycle on Linux/WSL
+    void* mapped_region = nullptr;
+#endif
 };

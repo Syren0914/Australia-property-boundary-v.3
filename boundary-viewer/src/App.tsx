@@ -481,19 +481,11 @@ function AppContent() {
         }
       }
 
-      // Only add property boundaries if zoom level is appropriate for mobile
+      // Only add property boundaries when zoomed in (faster at low zooms)
       const shouldShowPropertyBoundaries = () => {
         const currentZoom = map.getZoom();
-        // On mobile, show property boundaries at zoom 10+ for better performance
-        if (isMobile) {
-          return currentZoom >= 10; // Show at zoom 10+ on mobile
-        }
-        return true; // Show at all zoom levels on desktop
-      };
-      
-      // Always add property boundaries on desktop, regardless of zoom
-      const shouldAlwaysAddOnDesktop = () => {
-        return !isMobile; // Always add on desktop
+        const threshold = 5; // gate parcels until z>=12
+        return currentZoom >= threshold;
       };
 
       // Function to add property boundaries with mobile optimizations
@@ -505,16 +497,16 @@ function AppContent() {
               url: `pmtiles://${pmtilesUrl}`,
             });
 
-                         // Mobile-optimized fill layer
+            // Fill layer (gated by minzoom for performance)
              const fillLayerConfig: any = {
                id: 'parcel-fill',
                type: 'fill',
                source: sourceId,
                'source-layer': 'property_boundaries',
-               minzoom: isMobile ? 10 : 6,
+               minzoom: 5,
                paint: {
                  'fill-color': '#A259FF',
-                 'fill-opacity': isMobile ? 0.1 : 0.2, // Lower opacity on mobile
+                 'fill-opacity': isMobile ? 0.1 : 0.2,
                },
              };
              
@@ -536,17 +528,17 @@ function AppContent() {
               });
             }
 
-                         // Mobile-optimized outline layer
+            // Outline layer (same gating)
              const outlineLayerConfig: any = {
                id: 'parcel-outline',
                type: 'line',
                source: sourceId,
                'source-layer': 'property_boundaries',
-               minzoom: isMobile ? 10 : 7,
+               minzoom: 5,
                paint: {
                  'line-color': '#7000FF',
-                 'line-width': isMobile ? 0.5 : 1, // Thinner lines on mobile
-                 'line-opacity': isMobile ? 0.6 : 1, // Lower opacity on mobile
+                 'line-width': isMobile ? 0.5 : 1,
+                 'line-opacity': isMobile ? 0.6 : 1,
                },
              };
              
@@ -566,25 +558,25 @@ function AppContent() {
 
       // Add property boundaries if zoom level is appropriate
       console.log('Current zoom level:', map.getZoom(), 'isMobile:', isMobile);
-      if (shouldShowPropertyBoundaries() || shouldAlwaysAddOnDesktop()) {
+      if (shouldShowPropertyBoundaries()) {
         console.log('Adding property boundaries...');
         addPropertyBoundaries();
       } else {
         console.log('Not adding property boundaries - zoom level too low');
       }
 
-      // Listen for zoom changes to show/hide property boundaries on mobile
+      // Listen for zoom changes to show/hide property boundaries
       map.on('zoomend', () => {
         const currentZoom = map.getZoom();
         const hasSource = map.getSource(sourceId);
         
         console.log('Zoom changed to:', currentZoom, 'isMobile:', isMobile, 'hasSource:', !!hasSource);
         
-        if ((shouldShowPropertyBoundaries() || shouldAlwaysAddOnDesktop()) && !hasSource) {
+        if (shouldShowPropertyBoundaries() && !hasSource) {
           console.log('Adding property boundaries on zoom change...');
           addPropertyBoundaries();
-        } else if (!shouldShowPropertyBoundaries() && !shouldAlwaysAddOnDesktop() && hasSource) {
-          // Remove property boundaries on mobile when zoomed out too far
+        } else if (!shouldShowPropertyBoundaries() && hasSource) {
+          // Remove property boundaries when zoomed out too far
           console.log('Removing property boundaries on zoom change...');
           try {
             if (map.getLayer('parcel-fill')) map.removeLayer('parcel-fill');
