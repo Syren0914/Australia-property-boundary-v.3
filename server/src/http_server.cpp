@@ -49,8 +49,14 @@ constexpr double kZoomFullDetail = 15.0;
 constexpr double kZoomNoDetail = 9.0;
 
 std::unique_ptr<PmtilesReader> g_pmtiles_reader;
+static std::string g_pmtiles_path; // absolute path to current PMTiles source
 
 using HeaderList = std::vector<std::pair<std::string, std::string>>;
+
+// Forward declarations for functions used before their definitions
+std::string status_text_for(int status);
+bool send_all(int fd, const void* buffer, std::size_t len);
+void write_response(int fd, int status, const std::string& body, const HeaderList& extra_headers = {});
 
 std::optional<std::string> read_request(int fd) {
     std::string data;
@@ -158,6 +164,198 @@ const std::string* find_header_value(const HeaderList& headers, const std::strin
         }
     }
     return nullptr;
+}
+
+std::string normalize_request_path(const std::string& raw_path) {
+    std::string path = raw_path;
+    // If absolute-form URL (e.g., http://host:port/path?query), strip scheme and authority
+    const std::string http_prefix = "http://";
+    const std::string https_prefix = "https://";
+    auto starts_with = [](const std::string& s, const std::string& prefix) {
+        return s.size() >= prefix.size() && s.rfind(prefix, 0) == 0;
+    };
+    if (starts_with(path, http_prefix) || starts_with(path, https_prefix)) {
+        const std::size_t scheme_end = path.find("://");
+        if (scheme_end != std::string::npos) {
+            const std::size_t after_scheme = scheme_end + 3;
+            const std::size_t first_slash = path.find('/', after_scheme);
+            if (first_slash != std::string::npos) {
+                path = path.substr(first_slash);
+            } else {
+                path = "/"; // absolute-form with no path
+            }
+        }
+    }
+
+    // Strip query and fragment
+    const std::size_t qpos = path.find('?');
+    if (qpos != std::string::npos) {
+        path = path.substr(0, qpos);
+    }
+    const std::size_t hpos = path.find('#');
+    if (hpos != std::string::npos) {
+        path = path.substr(0, hpos);
+    }
+    return path;
+}
+
+struct RangeSpec {
+    bool has_range{false};
+    std::uint64_t start{0};
+    std::uint64_t end{0}; // inclusive
+};
+
+std::optional<RangeSpec> parse_range_header(const std::string& value, std::uint64_t file_size) {
+    // Expect formats: bytes=start-end, bytes=start-, bytes=-suffix
+    const std::string prefix = "bytes=";
+    if (value.rfind(prefix, 0) != 0) return std::nullopt;
+    std::string spec = trim_copy(value.substr(prefix.size()));
+    auto dash = spec.find('-');
+    if (dash == std::string::npos) return std::nullopt;
+
+    RangeSpec r;
+    r.has_range = true;
+
+    std::string start_str = trim_copy(spec.substr(0, dash));
+    std::string end_str = trim_copy(spec.substr(dash + 1));
+
+    try {
+        if (!start_str.empty()) {
+            r.start = static_cast<std::uint64_t>(std::stoll(start_str));
+            if (!end_str.empty()) {
+                r.end = static_cast<std::uint64_t>(std::stoll(end_str));
+            } else {
+                r.end = file_size ? (file_size - 1) : 0;
+            }
+        } else {
+            // suffix range: last N bytes
+            const std::uint64_t suffix = static_cast<std::uint64_t>(std::stoll(end_str));
+            if (suffix == 0 || suffix > file_size) {
+                r.start = 0;
+            } else {
+                r.start = file_size - suffix;
+            }
+            r.end = file_size ? (file_size - 1) : 0;
+        }
+    } catch (...) {
+        return std::nullopt;
+    }
+
+    if (file_size == 0) return r; // will be handled by caller
+
+    if (r.start >= file_size) return std::nullopt;
+    if (r.end < r.start) r.end = r.start;
+    if (r.end >= file_size) r.end = file_size - 1;
+    return r;
+}
+
+bool write_pmtiles_response_headers(int fd,
+                                    int status,
+                                    std::uint64_t content_length,
+                                    const std::optional<std::pair<std::uint64_t, std::uint64_t>>& content_range,
+                                    std::uint64_t total_size) {
+    std::ostringstream oss;
+    oss << "HTTP/1.1 " << status << ' ' << status_text_for(status) << "\r\n";
+    oss << "Access-Control-Allow-Origin: *\r\n";
+    oss << "Access-Control-Allow-Headers: Content-Type, Range\r\n";
+    oss << "Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n";
+    oss << "Accept-Ranges: bytes\r\n";
+    oss << "Access-Control-Expose-Headers: Accept-Ranges, Content-Length, Content-Range\r\n";
+    oss << "Content-Type: application/octet-stream\r\n"; // PMTiles is a binary container
+    oss << "Cache-Control: public, max-age=3600, immutable\r\n";
+    if (content_range.has_value()) {
+        const auto [start, end] = *content_range;
+        oss << "Content-Range: bytes " << start << '-' << end << '/' << total_size << "\r\n";
+    }
+    oss << "Content-Length: " << content_length << "\r\n";
+    oss << "Connection: close\r\n\r\n";
+    const std::string headers = oss.str();
+    return send_all(fd, headers.data(), headers.size());
+}
+
+bool handle_pmtiles_request(int fd, const std::string& method, const HeaderList& headers) {
+    if (g_pmtiles_path.empty()) {
+        write_response(fd, 404, "{\"status\":\"error\",\"message\":\"No PMTiles source configured\"}");
+        return true;
+    }
+
+    std::error_code ec;
+    const std::uint64_t total_size = std::filesystem::file_size(g_pmtiles_path, ec);
+    if (ec) {
+        write_response(fd, 500, "{\"status\":\"error\",\"message\":\"Failed to stat PMTiles file\"}");
+        return true;
+    }
+
+    const std::string* range_hdr = find_header_value(headers, "range");
+    std::optional<RangeSpec> range = std::nullopt;
+    if (range_hdr) {
+        range = parse_range_header(*range_hdr, total_size);
+        if (!range.has_value()) {
+            // 416 Range Not Satisfiable
+            std::ostringstream oss;
+            oss << "HTTP/1.1 416 Range Not Satisfiable\r\n";
+            oss << "Access-Control-Allow-Origin: *\r\n";
+            oss << "Access-Control-Allow-Headers: Content-Type, Range\r\n";
+            oss << "Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n";
+            oss << "Content-Range: bytes */" << total_size << "\r\n\r\n";
+            const std::string headers_only = oss.str();
+            send_all(fd, headers_only.data(), headers_only.size());
+            return true;
+        }
+    }
+
+    std::ifstream file(g_pmtiles_path, std::ios::binary);
+    if (!file) {
+        write_response(fd, 500, "{\"status\":\"error\",\"message\":\"Failed to open PMTiles file\"}");
+        return true;
+    }
+
+    std::uint64_t start = 0;
+    std::uint64_t end_inclusive = total_size ? (total_size - 1) : 0;
+    int status = 200;
+    if (range.has_value() && range->has_range) {
+        start = range->start;
+        end_inclusive = range->end;
+        status = 206;
+    }
+
+    const std::uint64_t content_len = (end_inclusive >= start) ? (end_inclusive - start + 1) : 0;
+
+    if (!write_pmtiles_response_headers(fd, status, content_len,
+                                        status == 206 ? std::optional<std::pair<std::uint64_t, std::uint64_t>>({start, end_inclusive}) : std::nullopt,
+                                        total_size)) {
+        return true; // failed to write headers; close connection
+    }
+
+    if (method == "HEAD") {
+        return true; // headers only
+    }
+
+    if (content_len == 0) {
+        return true;
+    }
+
+    file.seekg(static_cast<std::streamoff>(start), std::ios::beg);
+    constexpr std::size_t kChunk = 1 << 16; // 64 KiB
+    std::vector<char> buffer;
+    buffer.resize(static_cast<std::size_t>(std::min<std::uint64_t>(kChunk, content_len)));
+    std::uint64_t remaining = content_len;
+    while (remaining > 0) {
+        const std::size_t to_read = static_cast<std::size_t>(std::min<std::uint64_t>(buffer.size(), remaining));
+        if (!file.read(buffer.data(), static_cast<std::streamsize>(to_read))) {
+            // If partial read at EOF, send what we got
+            const std::streamsize got = file.gcount();
+            if (got > 0) {
+                send_all(fd, buffer.data(), static_cast<std::size_t>(got));
+            }
+            break;
+        }
+        if (!send_all(fd, buffer.data(), to_read)) {
+            break;
+        }
+        remaining -= to_read;
+    }
+    return true;
 }
 
 inline double clamp_lat(double lat) {
@@ -708,51 +906,32 @@ CameraMeters make_camera_meters(const nlohmann::json& payload) {
     const double east  = bounds.at("east").get<double>();
     const double north = bounds.at("north").get<double>();
 
-    // Allow global extents; clamp to Web Mercator valid latitude range
+    // Clamp to Web Mercator valid latitude range
     const double south_clamped = std::clamp(south, kMinWebMercatorLat, kMaxWebMercatorLat);
     const double north_clamped = std::clamp(north, kMinWebMercatorLat, kMaxWebMercatorLat);
 
-    OGRSpatialReference src;
-    src.SetWellKnownGeogCS("WGS84");
-
-    // Use global Web Mercator (meters) instead of CONUS Albers (EPSG:5070)
-    OGRSpatialReference dst;
-    dst.importFromEPSG(3857);
-
-    auto transform = std::unique_ptr<OGRCoordinateTransformation, decltype(&OGRCoordinateTransformation::DestroyCT)>{
-        OGRCreateCoordinateTransformation(&src, &dst),
-        &OGRCoordinateTransformation::DestroyCT
+    // Convert WGS84 lon/lat to Web Mercator (EPSG:3857) in meters without GDAL
+    auto lon_to_meters_x = [](double lon_deg) -> double {
+        static constexpr double origin_shift = 20037508.342789244;
+        return lon_deg * origin_shift / 180.0;
+    };
+    auto lat_to_meters_y = [](double lat_deg) -> double {
+        static constexpr double origin_shift = 20037508.342789244;
+        const double lat_rad = std::clamp(lat_deg, kMinWebMercatorLat, kMaxWebMercatorLat) * kPi / 180.0;
+        const double y = std::log(std::tan(kPi / 4.0 + lat_rad / 2.0));
+        return origin_shift * y / kPi;
     };
 
-    if (!transform) {
-        throw std::runtime_error("Failed to create coordinate transformation");
-    }
-
-    // Silence occasional projection warnings while transforming bounds
-    struct ProjErrorSilencer {
-        ProjErrorSilencer() { CPLPushErrorHandler(&ProjErrorSilencer::handler); }
-        ~ProjErrorSilencer() { CPLPopErrorHandler(); }
-        static void handler(CPLErr eErr, int err_no, const char* msg) {
-            if (msg && std::strstr(msg, "Lossy conversion")) {
-                return;
-            }
-            CPLDefaultErrorHandler(eErr, err_no, msg);
-        }
-    } silencer;
-
-    double xs[4] = { west, east, east, west };
-    double ys[4] = { south_clamped, south_clamped, north_clamped, north_clamped };
-    double zs[4] = { 0.0, 0.0, 0.0, 0.0 };
-
-    if (!transform->Transform(4, xs, ys, zs)) {
-        throw std::runtime_error("Camera bounds fall outside the supported dataset extent");
-    }
+    const double x_west  = lon_to_meters_x(west);
+    const double x_east  = lon_to_meters_x(east);
+    const double y_south = lat_to_meters_y(south_clamped);
+    const double y_north = lat_to_meters_y(north_clamped);
 
     CameraMeters meters{};
-    meters.view.min[0] = *std::min_element(std::begin(xs), std::end(xs));
-    meters.view.max[0] = *std::max_element(std::begin(xs), std::end(xs));
-    meters.view.min[1] = *std::min_element(std::begin(ys), std::end(ys));
-    meters.view.max[1] = *std::max_element(std::begin(ys), std::end(ys));
+    meters.view.min[0] = std::min(x_west, x_east);
+    meters.view.max[0] = std::max(x_west, x_east);
+    meters.view.min[1] = std::min(y_south, y_north);
+    meters.view.max[1] = std::max(y_south, y_north);
     meters.meters_per_pixel = payload.at("metersPerPixel").get<double>();
     return meters;
 }
@@ -776,8 +955,10 @@ nlohmann::json build_response(const CameraMeters& meters,
 std::string status_text_for(int status) {
     switch (status) {
         case 200: return "OK";
+        case 206: return "Partial Content";
         case 204: return "No Content";
         case 400: return "Bad Request";
+        case 416: return "Range Not Satisfiable";
         default: return "OK";
     }
 }
@@ -785,14 +966,14 @@ std::string status_text_for(int status) {
 void write_response(int fd,
                     int status,
                     const std::string& body,
-                    const HeaderList& extra_headers = {}) {
+                    const HeaderList& extra_headers) {
     const bool has_body = status != 204 && !body.empty();
 
     std::ostringstream oss;
     oss << "HTTP/1.1 " << status << ' ' << status_text_for(status) << "\r\n";
     oss << "Access-Control-Allow-Origin: *\r\n";
-    oss << "Access-Control-Allow-Headers: Content-Type\r\n";
-    oss << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
+    oss << "Access-Control-Allow-Headers: Content-Type, Range\r\n";
+    oss << "Access-Control-Allow-Methods: GET, POST, OPTIONS, HEAD\r\n";
 
     for (const auto& header : extra_headers) {
         oss << header.first << ": " << header.second << "\r\n";
@@ -929,7 +1110,7 @@ void handle_connection(int fd) {
     }
 
     const std::string& method = request_info->method;
-    const std::string& path = request_info->path;
+    const std::string path = normalize_request_path(request_info->path);
 
     if (method == "GET" && path == "/ws/camera") {
         const std::string* upgrade = find_header_value(header_list, "upgrade");
@@ -957,8 +1138,8 @@ void handle_connection(int fd) {
         return;
     }
 
-    if (method == "OPTIONS" && path == "/api/camera-state") {
-        std::cout << "[http] preflight for /api/camera-state" << std::endl;
+    if (method == "OPTIONS") {
+        std::cout << "[http] preflight for " << path << std::endl;
         HeaderList headers = {
             {"Access-Control-Max-Age", "86400"}
         };
@@ -969,6 +1150,12 @@ void handle_connection(int fd) {
 
     if (method == "GET" && path == "/health") {
         write_response(fd, 200, "{\"status\":\"ok\"}");
+        ::close(fd);
+        return;
+    }
+
+    if ((method == "GET" || method == "HEAD") && (path == "/pmtiles" || path == "/pmtiles/")) {
+        handle_pmtiles_request(fd, method, header_list);
         ::close(fd);
         return;
     }
@@ -1004,29 +1191,56 @@ void set_pmtiles_source(const std::string& path) {
     }
     std::cout << "[pmtiles] source ready: " << path << std::endl;
     g_pmtiles_reader = std::move(reader);
+    g_pmtiles_path = path;
 }
 
 void start_http_server() {
     std::signal(SIGPIPE, SIG_IGN);
 
-    int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    // Prefer dual-stack IPv6 socket so localhost on ::1 and 127.0.0.1 both work
+    int server_fd = ::socket(AF_INET6, SOCK_STREAM, 0);
+    if (server_fd >= 0) {
+        int off = 0; // allow dual-stack
+        ::setsockopt(server_fd, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off));
+    } else {
+        std::perror("socket(AF_INET6)");
+    }
     if (server_fd < 0) {
-        std::perror("socket");
-        return;
+        server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (server_fd < 0) {
+            std::perror("socket(AF_INET)");
+            return;
+        }
     }
 
     int opt = 1;
     ::setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(kListenPort);
+    int bind_result = -1;
+    if (
+        // Try IPv6 bind first if socket is IPv6
+        [] (int fd) { int domain = 0; socklen_t len = sizeof(domain); getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &len); return domain; }(server_fd) == AF_INET6
+    ) {
+        sockaddr_in6 addr6{};
+        addr6.sin6_family = AF_INET6;
+        addr6.sin6_addr = in6addr_any;
+        addr6.sin6_port = htons(kListenPort);
+        bind_result = ::bind(server_fd, reinterpret_cast<sockaddr*>(&addr6), sizeof(addr6));
+        if (bind_result < 0) {
+            std::perror("bind(AF_INET6)");
+        }
+    }
 
-    if (::bind(server_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        std::perror("bind");
-        ::close(server_fd);
-        return;
+    if (bind_result < 0) {
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = INADDR_ANY;
+        addr.sin_port = htons(kListenPort);
+        if (::bind(server_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+            std::perror("bind(AF_INET)");
+            ::close(server_fd);
+            return;
+        }
     }
 
     if (::listen(server_fd, kBacklog) < 0) {
@@ -1035,7 +1249,7 @@ void start_http_server() {
         return;
     }
 
-    std::cout << "HTTP server listening on port " << kListenPort << std::endl;
+    std::cout << "HTTP server listening on port " << kListenPort << " (dual-stack if available)" << std::endl;
 
     while (true) {
         int client_fd = ::accept(server_fd, nullptr, nullptr);

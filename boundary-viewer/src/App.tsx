@@ -447,7 +447,7 @@ function AppContent() {
       }
     });
 
-    const pmtilesUrl = 'https://wxwbxupdisbofesaygqj.functions.supabase.co/pmtiles-proxy';
+    const pmtilesUrl = `${API_BASE}/pmtiles`;
     const sourceId = 'property_boundaries';
 
     map.on('style.load', () => {
