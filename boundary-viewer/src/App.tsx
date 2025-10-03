@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
-import { Protocol } from 'pmtiles';
+import { Protocol, PMTiles } from 'pmtiles';
 import * as turf from '@turf/turf';
 import { ElevationChart } from './ElevationChart';
 import { ModernSidebar } from './components/ui/sidebar';
@@ -448,6 +448,20 @@ function AppContent() {
     });
 
     const pmtilesUrl = `${API_BASE}/pmtiles`;
+    const resolveVectorLayerId = async (url: string): Promise<string> => {
+      try {
+        const p = new PMTiles(url);
+        const metadata = await p.getMetadata();
+        const layers: any[] = (metadata as any)?.vector_layers ?? [];
+        if (Array.isArray(layers) && layers.length > 0) {
+          const preferred = layers.find(l => /property|parcel|boundary/i.test(l.id))?.id;
+          return preferred ?? layers[0].id;
+        }
+      } catch (err) {
+        console.warn('Failed to read PMTiles metadata; falling back to default layer id', err);
+      }
+      return 'property_boundaries';
+    };
     const sourceId = 'property_boundaries';
 
     map.on('style.load', () => {
@@ -489,7 +503,7 @@ function AppContent() {
       };
 
       // Function to add property boundaries with mobile optimizations
-      const addPropertyBoundaries = () => {
+      const addPropertyBoundaries = async () => {
         if (!map.getSource(sourceId)) {
           try {
             map.addSource(sourceId, {
@@ -497,12 +511,14 @@ function AppContent() {
               url: `pmtiles://${pmtilesUrl}`,
             });
 
+            const sourceLayerId = await resolveVectorLayerId(pmtilesUrl);
+
             // Fill layer (gated by minzoom for performance)
              const fillLayerConfig: any = {
                id: 'parcel-fill',
                type: 'fill',
                source: sourceId,
-               'source-layer': 'property_boundaries',
+               'source-layer': sourceLayerId,
                minzoom: 5,
                paint: {
                  'fill-color': '#A259FF',
@@ -533,7 +549,7 @@ function AppContent() {
                id: 'parcel-outline',
                type: 'line',
                source: sourceId,
-               'source-layer': 'property_boundaries',
+               'source-layer': sourceLayerId,
                minzoom: 5,
                paint: {
                  'line-color': '#7000FF',
